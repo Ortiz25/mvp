@@ -62,6 +62,9 @@ router.get('/:slug/status', (req, res) => {
   // MikroTik uses 'link-orig' in login.html — accept both param names
   const dst = req.query.dst || req.query['link-orig'] || null;
 
+  // Debug: log all query params so we can trace MAC delivery
+  console.log(`[STATUS] slug=${req.params.slug} ip=${ip} mac=${mac} dst=${dst} raw_query=${JSON.stringify(req.query)}`);
+
   const session = getOrCreateSession(ip, c.id, mac, dst);
 
   res.json({

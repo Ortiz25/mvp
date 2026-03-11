@@ -3,51 +3,59 @@ import { createContext, useContext, useState, useCallback, useRef, ReactNode } f
 import { CampaignSummary, CampaignConfig, PortalStatus, portalApi } from '../lib/api';
 
 /**
- * MikroTik Hotspot injects these params into the FIRST redirect URL only:
- *   ?mac=XX:XX:XX:XX:XX:XX  — client MAC
- *   ?ip=192.168.88.x        — client IP
- *   ?username=...           — same as mac (Hotspot default)
- *   ?dst=http://...         — original destination URL
- *   ?identity=RouterName    — router name
+ * MikroTik Hotspot redirect URL format:
+ *   http://captive.local/?mac=XX:XX:XX:XX:XX:XX&ip=192.168.88.x&username=XX:XX:XX:XX:XX:XX&dst=http://original
  *
- * After React Router renders, the URL changes and these params are lost.
- * We persist them in sessionStorage so they survive SPA navigation and
- * re-renders, but are gone when the tab is closed (correct behaviour).
- *
- * In MOCK / dev mode the params won't be present — that's fine.
- * MIKROTIK_MOCK=true means the backend returns the success URL directly.
+ * The login.html on the router submits a form to captive.local with these as GET params.
+ * We must capture them on first load and persist to sessionStorage because:
+ *   - React Router may strip/ignore query params after rendering
+ *   - SPA navigation loses the original URL params
+ *   - The params only arrive ONCE (on the initial MikroTik redirect)
  */
-const SS_KEY = 'cp_hotspot_params';
 
-function readHotspotParams(): HotspotParams {
-  // 1. Try current URL query string (first load with MikroTik redirect)
-  const p = new URLSearchParams(window.location.search);
-  const mac      = p.get('mac') || p.get('username') || null;
-  const ip       = p.get('ip') || null;
-  const dst      = p.get('dst') || null;
-  const identity = p.get('identity') || null;
-
-  if (mac || dst) {
-    // Got fresh params from MikroTik redirect — persist them
-    const params: HotspotParams = { mac, ip, dst, identity };
-    try { sessionStorage.setItem(SS_KEY, JSON.stringify(params)); } catch {}
-    return params;
-  }
-
-  // 2. Fall back to sessionStorage (SPA navigation / refresh)
-  try {
-    const stored = sessionStorage.getItem(SS_KEY);
-    if (stored) return JSON.parse(stored) as HotspotParams;
-  } catch {}
-
-  return { mac: null, ip: null, dst: null, identity: null };
-}
+const SS_KEY = 'cp_hotspot';
 
 export interface HotspotParams {
   mac:      string | null;
   ip:       string | null;
   dst:      string | null;
   identity: string | null;
+}
+
+function readHotspotParams(): HotspotParams {
+  // Read from the ACTUAL current href — not React Router's view of the URL
+  // URLSearchParams works on the raw window.location.search
+  const raw = window.location.search;
+  const p   = new URLSearchParams(raw);
+
+  const mac      = p.get('mac') || p.get('username') || null;
+  const ip       = p.get('ip')  || null;
+  // Accept dst, link-orig (MikroTik firmware varies)
+  const dst      = p.get('dst') || p.get('link-orig') || p.get('link_orig') || null;
+  const identity = p.get('identity') || null;
+
+  if (mac || dst) {
+    // Fresh MikroTik redirect — save to sessionStorage
+    const params: HotspotParams = { mac, ip, dst, identity };
+    try {
+      sessionStorage.setItem(SS_KEY, JSON.stringify(params));
+      console.log('[Hotspot] Params captured from URL:', params);
+    } catch {}
+    return params;
+  }
+
+  // No params in URL — try sessionStorage (SPA navigation / page refresh)
+  try {
+    const stored = sessionStorage.getItem(SS_KEY);
+    if (stored) {
+      const p2 = JSON.parse(stored) as HotspotParams;
+      console.log('[Hotspot] Params restored from sessionStorage:', p2);
+      return p2;
+    }
+  } catch {}
+
+  console.log('[Hotspot] No params found — direct access or dev mode');
+  return { mac: null, ip: null, dst: null, identity: null };
 }
 
 interface Ctx {
@@ -70,7 +78,7 @@ const Ctx = createContext<Ctx>({
 });
 
 export function SessionProvider({ children }: { children: ReactNode }) {
-  // Read once on mount — stable ref so it never triggers re-renders
+  // Capture hotspot params ONCE at mount, before React Router can touch the URL
   const hotspot = useRef<HotspotParams>(readHotspotParams()).current;
 
   const [campaigns,    setCampaigns]    = useState<CampaignSummary[]>([]);
@@ -96,6 +104,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     setError(null);
     try {
+      // Always pass hotspot params — backend uses COALESCE so it only updates if not already set
       const [s, c] = await Promise.all([
         portalApi.status(slug, hotspot),
         portalApi.config(slug),

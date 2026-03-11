@@ -21,7 +21,6 @@ function WifiArc({ strength = 3 }: { strength?: number }) {
 
 function CampaignCard({ camp, selected, onClick }: { camp: CampaignSummary; selected: boolean; onClick: () => void }) {
   const watchPct = Math.round((camp.video_required_pct ?? 0.8) * 100);
-
   return (
     <button onClick={onClick}
       className={`campaign-card ${selected ? 'campaign-card-selected' : ''}`}>
@@ -41,13 +40,11 @@ function CampaignCard({ camp, selected, onClick }: { camp: CampaignSummary; sele
             <WifiArc strength={selected ? 3 : 2} />
           </div>
         </div>
-
         {camp.description && (
           <p className="text-[12px] text-white/40 font-body leading-relaxed mb-3 line-clamp-2">
             {camp.description}
           </p>
         )}
-
         <div className="flex flex-wrap gap-1.5">
           <span className="chip chip-muted gap-1">
             <IconClock className="w-3 h-3" />
@@ -78,12 +75,15 @@ function CampaignCard({ camp, selected, onClick }: { camp: CampaignSummary; sele
 
 export function PickerPage() {
   const navigate = useNavigate();
-  const { selectCampaign, refresh } = usePortal();
+  const { selectCampaign, refresh, hotspot } = usePortal();
   const [campaigns,   setCampaigns]   = useState<CampaignSummary[]>([]);
   const [selected,    setSelected]    = useState<string | null>(null);
   const [loadingList, setLoadingList] = useState(true);
   const [starting,    setStarting]    = useState(false);
   const [error,       setError]       = useState('');
+
+  // Show hotspot debug info in dev / when no mac yet
+  const showDebug = !hotspot.mac;
 
   useEffect(() => {
     setLoadingList(true);
@@ -124,6 +124,24 @@ export function PickerPage() {
           Pick a campaign, watch a short clip, get online — no sign-up needed.
         </p>
       </div>
+
+      {/* ── DEBUG PANEL — visible when MAC is missing ─────────────────── */}
+      {showDebug && (
+        <div className="mb-4 px-3 py-2.5 rounded-xl border border-amber-500/20 bg-amber-500/[0.05] animate-fade-up">
+          <p className="text-[9px] font-mono font-bold text-amber-400/70 uppercase tracking-widest mb-1.5">
+            Debug — Hotspot Params
+          </p>
+          <div className="space-y-0.5 font-mono text-[10px] text-white/40">
+            <div>mac: <span className="text-amber-400/80">{hotspot.mac ?? '⚠ missing'}</span></div>
+            <div>ip:  <span className="text-white/30">{hotspot.ip  ?? '—'}</span></div>
+            <div>dst: <span className="text-white/30">{hotspot.dst ?? '—'}</span></div>
+            <div>url: <span className="text-white/20 break-all">{window.location.href}</span></div>
+          </div>
+          <p className="text-[9px] text-amber-400/40 font-body mt-1.5 leading-relaxed">
+            MAC missing = MikroTik params not received. Check login.html on router.
+          </p>
+        </div>
+      )}
 
       {/* Campaign list */}
       <div className="mb-5 animate-fade-up anim-d2">
@@ -166,7 +184,6 @@ export function PickerPage() {
         )}
       </div>
 
-      {/* Error */}
       {error && !loadingList && (
         <div className="mb-4 px-4 py-3 rounded-xl bg-red-500/[0.07] border border-red-500/20 text-sm text-red-400 font-body">
           {error}
