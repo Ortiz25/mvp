@@ -46,6 +46,8 @@ ok "PM2 $(pm2 -v)"
 
 # ── Directory structure ───────────────────────────────────────────────────
 info "Creating directory structure…"
+# Ensure the current user owns the project tree (handles root-owned uploads/git clones)
+sudo chown -R "$WHOAMI":"$WHOAMI" "$BASE"
 mkdir -p "$BASE/data" "$BASE/media" "$BASE/logs"
 ok "Directories ready"
 
