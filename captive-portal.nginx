@@ -9,23 +9,55 @@ server {
     listen 80 default_server;
     listen [::]:80 default_server;
     server_name _;
-
     client_max_body_size 512M;
 
-    # ── Captive portal OS / browser detection responses ──────────────────────
-    # These must respond before the SPA catch-all so devices show the portal popup.
-    location = /generate_204        { return 302 http://captive.local/; }
-    location = /gen_204             { return 302 http://captive.local/; }
-    location = /hotspot-detect.html { return 302 http://captive.local/; }
-    location = /library/test/success.html { return 200 "Success"; add_header Content-Type text/plain; }
-    location = /redirect            { return 302 http://captive.local/; }
-    # Windows NCSI — must return exactly this string
-    location = /ncsi.txt            { return 200 "Microsoft NCSI"; add_header Content-Type text/plain; }
-    location = /connecttest.txt     { return 302 http://captive.local/; }
-    # Apple CNA (Captive Network Assistant)
-    location = /hotspot-detect.html { return 302 http://captive.local/; }
+    # ── iOS / macOS — Apple CNA (Captive Network Assistant) ──────────────────
+    # Apple probes these exact paths over HTTP after HTTPS fails (no cert).
+    # Response must NOT be the "Success" body — anything else triggers popup.
+    location = /hotspot-detect.html {
+        return 302 http://captive.local/;
+    }
+    location = /success.txt {
+        return 302 http://captive.local/;
+    }
+    location = /library/test/success.html {
+        return 302 http://captive.local/;
+    }
+    # Apple also checks these on newer iOS versions
+    location = /bag {
+        return 302 http://captive.local/;
+    }
 
-    # ── API backend (portal + admin API, video uploads) ───────────────────────
+    # ── Android / Chrome ──────────────────────────────────────────────────────
+    # Android expects 204 No Content = internet OK, anything else = portal present
+    location = /generate_204 {
+        return 302 http://captive.local/;
+    }
+    location = /gen_204 {
+        return 302 http://captive.local/;
+    }
+
+    # ── Windows NCSI (Network Connectivity Status Indicator) ─────────────────
+    # Windows expects response body to be EXACTLY "Microsoft NCSI" (no newline)
+    location = /ncsi.txt {
+        return 200 "Microsoft NCSI";
+        add_header Content-Type text/plain;
+    }
+    # Windows 10/11 also checks this path
+    location = /connecttest.txt {
+        return 200 "Microsoft NCSI";
+        add_header Content-Type text/plain;
+    }
+
+    # ── Firefox ───────────────────────────────────────────────────────────────
+    location = /canonical.html {
+        return 302 http://captive.local/;
+    }
+    location = /redirect {
+        return 302 http://captive.local/;
+    }
+
+    # ── API backend (portal + admin, video uploads) ───────────────────────────
     location /api/ {
         proxy_pass              http://127.0.0.1:3000;
         proxy_http_version      1.1;
@@ -34,58 +66,47 @@ server {
         proxy_set_header        X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_read_timeout      120s;
         proxy_send_timeout      120s;
-        proxy_request_buffering off;   # essential for large multipart video uploads
+        proxy_request_buffering off;
         client_max_body_size    512M;
     }
 
-    # ── Video / media files served by Node.js ─────────────────────────────────
-    # Backend stores uploads at /media/{campaignId}/{filename}
-    # and serves them via express.static
+    # ── Video / media files ───────────────────────────────────────────────────
     location /media/ {
-        proxy_pass              http://127.0.0.1:3000;
-        proxy_set_header        X-Real-IP $remote_addr;
-        add_header              Cache-Control "public, max-age=86400";
-        proxy_read_timeout      60s;
+        proxy_pass          http://127.0.0.1:3000;
+        proxy_set_header    X-Real-IP $remote_addr;
+        add_header          Cache-Control "public, max-age=86400";
     }
-
-    # Legacy /uploads/ alias (kept for backwards compatibility)
     location /uploads/ {
-        proxy_pass              http://127.0.0.1:3000;
-        proxy_set_header        X-Real-IP $remote_addr;
-        add_header              Cache-Control "public, max-age=86400";
+        proxy_pass          http://127.0.0.1:3000;
+        proxy_set_header    X-Real-IP $remote_addr;
+        add_header          Cache-Control "public, max-age=86400";
     }
 
     # ── React SPA (captive portal frontend) ───────────────────────────────────
     location / {
-        root      /home/pi/captive-portal/frontend/dist;
+        root      /home/admin/apps/mvp/frontend/dist;
         try_files $uri $uri/ /index.html;
         add_header Cache-Control "no-cache, no-store, must-revalidate";
     }
-
-    # Fingerprinted static assets — cache forever
     location ~* \.(js|css|png|jpg|jpeg|gif|svg|woff2?|ico)$ {
-        root      /home/pi/captive-portal/frontend/dist;
+        root      /home/admin/apps/mvp/frontend/dist;
         try_files $uri =404;
         add_header Cache-Control "public, max-age=31536000, immutable";
         access_log off;
     }
 }
 
-# ── Admin Dashboard (port 8090) ───────────────────────────────────────────────
-# Restricted to the LAN subnet — NOT accessible from the internet.
-# Admin users connect from 192.168.88.x (same LAN as Pi).
+# ── Admin Dashboard (port 8090 — LAN only) ────────────────────────────────────
 server {
     listen 8090;
     server_name _;
 
-    # Only allow access from the LAN subnet and localhost
     allow 192.168.88.0/24;
     allow 127.0.0.1;
     deny  all;
 
     client_max_body_size 512M;
 
-    # API — admin routes need multipart for video upload
     location /api/ {
         proxy_pass              http://127.0.0.1:3000;
         proxy_http_version      1.1;
@@ -96,35 +117,27 @@ server {
         proxy_request_buffering off;
         client_max_body_size    512M;
     }
-
-    # Media files (admin previews uploaded videos)
     location /media/ {
         proxy_pass http://127.0.0.1:3000;
         proxy_set_header X-Real-IP $remote_addr;
     }
-
     location /uploads/ {
         proxy_pass http://127.0.0.1:3000;
     }
-
-    # Admin SPA
     location / {
-        root      /home/pi/captive-portal/admin/dist;
+        root      /home/admin/apps/mvp/admin/dist;
         try_files $uri $uri/ /index.html;
         add_header Cache-Control "no-cache, no-store, must-revalidate";
     }
-
     location ~* \.(js|css|png|jpg|jpeg|gif|svg|woff2?|ico)$ {
-        root      /home/pi/captive-portal/admin/dist;
+        root      /home/admin/apps/mvp/admin/dist;
         try_files $uri =404;
         add_header Cache-Control "public, max-age=31536000, immutable";
         access_log off;
     }
 }
 
-# ── Kolibri learning platform (walled garden — pre-auth access) ───────────────
-# Accessible to ALL clients, including unauthenticated ones.
-# MikroTik walled-garden must include 192.168.88.2:8080 (or Pi IP port 8080).
+# ── Kolibri (walled garden — pre-auth access) ─────────────────────────────────
 server {
     listen 80;
     server_name kolibri.local;
