@@ -2,7 +2,7 @@
 module.exports = {
   apps: [{
     name:        'captive-api',
-    script:      './backend/src/index.js',   // entry point (not app.js)
+    script:      '/home/admin/apps/mvp/backend/src/index.js',   // entry point (not app.js)
     cwd:         '/home/admin/captive-portal',
     instances:   1,
     exec_mode:   'fork',
