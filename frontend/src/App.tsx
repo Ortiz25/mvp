@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { SessionProvider } from './context/SessionContext';
 import { Shell }           from './components/layout/Shell';
 import { PickerPage }      from './pages/PickerPage';
@@ -7,10 +7,25 @@ import { SurveyPage }      from './pages/SurveyPage';
 import { SuccessPage }     from './pages/SuccessPage';
 import { OfflinePage }     from './pages/OfflinePage';
 
-// If the user granted access and MikroTik bounced them back to captive.local,
-// keep them on /survey (which shows the ConnectingScreen) instead of / (picker).
+/**
+ * After grant, window.location.replace() sends the browser to:
+ *   http://192.168.88.1/login?username=MAC&password=MAC&dst=http://www.google.com
+ *
+ * MikroTik authenticates the MAC, then redirects to dst (google.com).
+ * However the Android captive portal WebView intercepts this and may reload
+ * captive.local/ instead of following the external redirect.
+ *
+ * When that happens, the SPA remounts at / with all state cleared.
+ * We persist a 'cp_granted' flag in sessionStorage before the redirect
+ * so we can detect this bounce-back and show ConnectingScreen instead of PickerPage.
+ *
+ * The flag is stored per-session (cleared when tab closes), so returning
+ * users start fresh.
+ */
 const GRANT_KEY = 'cp_granted';
-const isGranted = () => { try { return sessionStorage.getItem(GRANT_KEY) === '1'; } catch { return false; } };
+export const isGrantedFlagSet = () => {
+  try { return sessionStorage.getItem(GRANT_KEY) === '1'; } catch { return false; }
+};
 
 export default function App() {
   return (
@@ -18,14 +33,13 @@ export default function App() {
       <BrowserRouter>
         <Shell>
           <Routes>
-            <Route path="/"        element={<PickerPage />} />
+            {/* / and * both check grant flag first */}
+            <Route path="/"        element={isGrantedFlagSet() ? <SurveyPage /> : <PickerPage />} />
             <Route path="/watch"   element={<VideoPage />} />
             <Route path="/survey"  element={<SurveyPage />} />
             <Route path="/success" element={<SuccessPage />} />
             <Route path="/offline" element={<OfflinePage />} />
-            {/* Catch-all: if grant flag is set, stay on survey (shows connecting screen).
-                Otherwise go to picker. This handles MikroTik bouncing back to captive.local/. */}
-            <Route path="*" element={isGranted() ? <SurveyPage /> : <Navigate to="/" replace />} />
+            <Route path="*"        element={isGrantedFlagSet() ? <SurveyPage /> : <PickerPage />} />
           </Routes>
         </Shell>
       </BrowserRouter>

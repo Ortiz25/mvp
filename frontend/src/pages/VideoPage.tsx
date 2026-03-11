@@ -10,8 +10,20 @@ const clearGrantedFlag = () => { try { sessionStorage.removeItem(GRANT_KEY); } c
 const isGrantedFlagSet = () => { try { return sessionStorage.getItem(GRANT_KEY) === '1'; } catch { return false; } };
 
 function ConnectingScreen() {
+  useEffect(() => {
+    const t = setTimeout(() => {
+      window.location.replace('http://www.google.com');
+    }, 3000);
+    return () => clearTimeout(t);
+  }, []);
+
+  const dismiss = () => {
+    clearGrantedFlag();
+    window.location.replace('http://www.google.com');
+  };
+
   return (
-    <div className="flex flex-col items-center justify-center py-20 gap-4 animate-fade-in">
+    <div className="flex flex-col items-center justify-center py-16 gap-4 animate-fade-in">
       <div className="relative">
         <div className="absolute inset-0 rounded-full bg-signal/20 animate-ping-slow" />
         <div className="relative w-16 h-16 rounded-full bg-gradient-to-br from-signal to-aqua
@@ -19,13 +31,20 @@ function ConnectingScreen() {
           <IconUnlock className="w-7 h-7 text-void" />
         </div>
       </div>
-      <div className="text-center">
-        <p className="font-display font-bold text-white text-lg mb-1">Connecting…</p>
-        <p className="text-sm text-white/40 font-body">Authorizing your device with the router</p>
+      <div className="text-center px-6">
+        <p className="font-display font-bold text-white text-lg mb-1">Access Granted!</p>
+        <p className="text-sm text-white/40 font-body mb-1">Your device is authorized.</p>
+        <p className="text-xs text-white/25 font-body">Redirecting you now…</p>
       </div>
-      <div className="w-6 h-6 rounded-full border-2 border-signal/40 border-t-signal animate-spin mt-2" />
-      <p className="text-[10px] text-white/20 font-body text-center px-8 mt-2">
-        You will be redirected to the internet automatically.
+      <div className="w-6 h-6 rounded-full border-2 border-signal/40 border-t-signal animate-spin" />
+      <button onClick={dismiss}
+        className="mt-2 px-6 py-3 rounded-xl font-display font-bold text-sm
+          bg-signal/10 border border-signal/25 text-signal
+          hover:bg-signal/20 active:scale-95 transition-all duration-150">
+        Open Browser →
+      </button>
+      <p className="text-[10px] text-white/15 font-body text-center px-8">
+        Tap the button if you are not redirected automatically
       </p>
     </div>
   );
@@ -49,6 +68,7 @@ export function VideoPage() {
   const duration = video?.durationSeconds  ?? 120;
 
   useEffect(() => {
+    if (grantedRef.current) return;  // ← block when connecting
     if (!selectedSlug) { navigate('/', { replace: true }); return; }
     refresh();
     return () => clearInterval(timerRef.current);
