@@ -96,8 +96,8 @@ export function Sessions() {
                       <td className="text-white/50 text-xs">{s.campaign_name ?? '—'}</td>
                       <td>
                         <div className="flex flex-wrap gap-1">
-                          <Badge ok={s.video_watched} label="Video" />
-                          <Badge ok={s.survey_done}   label="Survey" />
+                          <Badge ok={!!s.video_watched} label="Video" />
+                          <Badge ok={!!s.survey_done}   label="Survey" />
                         </div>
                       </td>
                       <td>
