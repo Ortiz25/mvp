@@ -1,143 +1,141 @@
 # /etc/nginx/sites-available/captive-portal
-# sudo cp captive-portal.nginx /etc/nginx/sites-available/captive-portal
-# sudo ln -sf /etc/nginx/sites-available/captive-portal /etc/nginx/sites-enabled/captive-portal
-# sudo rm -f /etc/nginx/sites-enabled/default
-# sudo nginx -t && sudo systemctl reload nginx
+#
+# Install:
+#   sudo cp captive-portal.nginx /etc/nginx/sites-available/captive-portal
+#   sudo ln -s /etc/nginx/sites-available/captive-portal /etc/nginx/sites-enabled/captive-portal
+#   sudo rm -f /etc/nginx/sites-enabled/default
+#   sudo nginx -t && sudo systemctl reload nginx
+#
+# Architecture:
+#   Port 80   — captive portal frontend + API (all clients, walled-garden accessible)
+#   Port 8090 — admin dashboard (management subnet only)
+#   kolibri.local — walled-garden proxy to Kolibri :8080
+#
+# MikroTik Hotspot redirects unauthenticated clients to:
+#   http://captive.local/?mac=XX&ip=YY&username=XX&dst=http://original
+# After portal flow, frontend redirects to:
+#   http://192.168.88.1/login?username=MAC&password=MAC&dst=original
+# MikroTik authenticates and redirects to dst — user leaves captive.local.
+#
+# Dev mode (MIKROTIK_MOCK=true):
+#   No MikroTik redirect happens. Portal flow ends at /success page.
+#   Test by opening http://captive.local directly.
 
-# ── Captive Portal (port 80) ──────────────────────────────────────────────────
+# ── Captive Portal — port 80 ──────────────────────────────────────────────
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
     server_name _;
+
     client_max_body_size 512M;
+    proxy_read_timeout   120s;
 
-    # ── iOS / macOS — Apple CNA (Captive Network Assistant) ──────────────────
-    # Apple probes these exact paths over HTTP after HTTPS fails (no cert).
-    # Response must NOT be the "Success" body — anything else triggers popup.
-    location = /hotspot-detect.html {
-        return 302 http://captive.local/;
+    # ── Captive portal OS detection ──────────────────────────────────────
+    # Belt-and-suspenders: MikroTik Hotspot handles most of these itself,
+    # but we respond here too in case the Pi receives the request directly.
+
+    # Android / Chrome
+    location = /generate_204         { return 204; }
+    location = /gen_204              { return 204; }
+    location = /connecttest.txt      { return 302 http://captive.local/; }
+
+    # Windows NCSI
+    location = /ncsi.txt             {
+        add_header Content-Type text/plain;
+        return 200 "Microsoft NCSI";
     }
-    location = /success.txt {
-        return 302 http://captive.local/;
-    }
+
+    # Firefox
+    location = /canonical.html       { return 302 http://captive.local/; }
+    location = /success.txt          { return 200 "success"; add_header Content-Type text/plain; }
+
+    # Apple
+    location = /hotspot-detect.html  { return 302 http://captive.local/; }
     location = /library/test/success.html {
-        return 302 http://captive.local/;
-    }
-    # Apple also checks these on newer iOS versions
-    location = /bag {
-        return 302 http://captive.local/;
+        add_header Content-Type text/html;
+        return 200 "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>";
     }
 
-    # ── Android / Chrome ──────────────────────────────────────────────────────
-    # Android expects 204 No Content = internet OK, anything else = portal present
-    location = /generate_204 {
-        return 302 http://captive.local/;
-    }
-    location = /gen_204 {
-        return 302 http://captive.local/;
-    }
-
-    # ── Windows NCSI (Network Connectivity Status Indicator) ─────────────────
-    # Windows expects response body to be EXACTLY "Microsoft NCSI" (no newline)
-    location = /ncsi.txt {
-        return 200 "Microsoft NCSI";
-        add_header Content-Type text/plain;
-    }
-    # Windows 10/11 also checks this path
-    location = /connecttest.txt {
-        return 200 "Microsoft NCSI";
-        add_header Content-Type text/plain;
-    }
-
-    # ── Firefox ───────────────────────────────────────────────────────────────
-    location = /canonical.html {
-        return 302 http://captive.local/;
-    }
-    location = /redirect {
-        return 302 http://captive.local/;
-    }
-
-    # ── API backend (portal + admin, video uploads) ───────────────────────────
+    # ── Node.js API ───────────────────────────────────────────────────────
     location /api/ {
-        proxy_pass              http://127.0.0.1:3000;
-        proxy_http_version      1.1;
-        proxy_set_header        Host              $host;
-        proxy_set_header        X-Real-IP         $remote_addr;
-        proxy_set_header        X-Forwarded-For   $proxy_add_x_forwarded_for;
-        proxy_read_timeout      120s;
-        proxy_send_timeout      120s;
+        proxy_pass             http://127.0.0.1:3000;
+        proxy_http_version     1.1;
+        proxy_set_header       Host              $host;
+        proxy_set_header       X-Real-IP         $remote_addr;
+        proxy_set_header       X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_read_timeout     120s;
         proxy_request_buffering off;
-        client_max_body_size    512M;
     }
 
-    # ── Video / media files ───────────────────────────────────────────────────
+    # ── Media files ───────────────────────────────────────────────────────
     location /media/ {
-        proxy_pass          http://127.0.0.1:3000;
-        proxy_set_header    X-Real-IP $remote_addr;
-        add_header          Cache-Control "public, max-age=86400";
+        proxy_pass        http://127.0.0.1:3000;
+        proxy_set_header  X-Real-IP $remote_addr;
+        add_header        Cache-Control "public, max-age=86400";
     }
     location /uploads/ {
-        proxy_pass          http://127.0.0.1:3000;
-        proxy_set_header    X-Real-IP $remote_addr;
-        add_header          Cache-Control "public, max-age=86400";
+        proxy_pass        http://127.0.0.1:3000;
+        proxy_set_header  X-Real-IP $remote_addr;
+        add_header        Cache-Control "public, max-age=86400";
     }
 
-    # ── React SPA (captive portal frontend) ───────────────────────────────────
-    location / {
-        root      /home/admin/apps/mvp/frontend/dist;
-        try_files $uri $uri/ /index.html;
-        add_header Cache-Control "no-cache, no-store, must-revalidate";
-    }
-    location ~* \.(js|css|png|jpg|jpeg|gif|svg|woff2?|ico)$ {
-        root      /home/admin/apps/mvp/frontend/dist;
-        try_files $uri =404;
+    # ── Fingerprinted static assets (cache forever) ───────────────────────
+    location ~* \.(js|css|woff2?|png|jpg|svg|ico)$ {
+        root       /home/admin/apps/mvp/frontend/dist;
+        try_files  $uri =404;
         add_header Cache-Control "public, max-age=31536000, immutable";
         access_log off;
     }
+
+    # ── React SPA (portal frontend) ───────────────────────────────────────
+    location / {
+        root       /home/admin/apps/mvp/frontend/dist;
+        try_files  $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+    }
 }
 
-# ── Admin Dashboard (port 8090 — LAN only) ────────────────────────────────────
+# ── Admin Dashboard — port 8090 ───────────────────────────────────────────
+# Restricted to management subnets.
+# Add your laptop's subnet if accessing from a different network.
 server {
     listen 8090;
     server_name _;
 
-    allow 192.168.88.0/24;
     allow 127.0.0.1;
+    allow 192.168.88.0/24;   # captive portal subnet (Pi + MikroTik)
+    allow 192.168.1.0/24;    # typical home/office LAN
+    allow 192.168.8.0/24;    # additional management subnet
     deny  all;
 
     client_max_body_size 512M;
 
     location /api/ {
-        proxy_pass              http://127.0.0.1:3000;
-        proxy_http_version      1.1;
-        proxy_set_header        X-Real-IP $remote_addr;
-        proxy_set_header        X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_read_timeout      120s;
-        proxy_send_timeout      120s;
+        proxy_pass             http://127.0.0.1:3000;
+        proxy_http_version     1.1;
+        proxy_set_header       X-Real-IP $remote_addr;
+        proxy_read_timeout     120s;
         proxy_request_buffering off;
-        client_max_body_size    512M;
     }
-    location /media/ {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-    location /uploads/ {
-        proxy_pass http://127.0.0.1:3000;
-    }
-    location / {
-        root      /home/admin/apps/mvp/admin/dist;
-        try_files $uri $uri/ /index.html;
-        add_header Cache-Control "no-cache, no-store, must-revalidate";
-    }
-    location ~* \.(js|css|png|jpg|jpeg|gif|svg|woff2?|ico)$ {
-        root      /home/admin/apps/mvp/admin/dist;
-        try_files $uri =404;
+
+    location /media/   { proxy_pass http://127.0.0.1:3000; }
+    location /uploads/ { proxy_pass http://127.0.0.1:3000; }
+
+    location ~* \.(js|css|woff2?|png|jpg|svg|ico)$ {
+        root       /home/admin/apps/mvp/admin/dist;
+        try_files  $uri =404;
         add_header Cache-Control "public, max-age=31536000, immutable";
         access_log off;
     }
+
+    location / {
+        root      /home/admin/apps/mvp/admin/dist;
+        try_files $uri $uri/ /index.html;
+    }
 }
 
-# ── Kolibri (walled garden — pre-auth access) ─────────────────────────────────
+# ── Kolibri — walled garden pre-auth ─────────────────────────────────────
+# Accessible before authentication (in MikroTik walled-garden ip list).
 server {
     listen 80;
     server_name kolibri.local;
@@ -151,3 +149,14 @@ server {
         client_max_body_size 100M;
     }
 }
+
+# ── Kiwix (Wikipedia offline) — enable when running ──────────────────────
+# server {
+#     listen 80;
+#     server_name kiwix.local;
+#     location / {
+#         proxy_pass http://127.0.0.1:8888;
+#         proxy_set_header Host $host;
+#         proxy_set_header X-Real-IP $remote_addr;
+#     }
+# }

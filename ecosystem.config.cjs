@@ -1,9 +1,22 @@
 // ecosystem.config.cjs — PM2 process config
+//
+// setup.sh patches the cwd, DB_PATH, and MEDIA_DIR values at install time.
+// ALL secrets (ADMIN_TOKEN) are loaded from backend/.env by dotenv.
+// Do NOT put secrets in this file — it is committed to version control.
+//
+// Dev vs Live toggle:
+//   MIKROTIK_MOCK=true   → dev/testing mode (no router needed)
+//   MIKROTIK_MOCK=false  → live mode (MikroTik Hotspot must be configured)
+//
+// To switch modes on a running Pi:
+//   1. Edit backend/.env   → MIKROTIK_MOCK=false
+//   2. pm2 restart captive-api --update-env
+
 module.exports = {
   apps: [{
     name:        'captive-api',
-    script:      '/home/admin/apps/mvp/backend/src/index.js',   // entry point (not app.js)
-    cwd:         '/home/admin/captive-portal',
+    script:      './backend/src/index.js',
+    cwd:         '/home/admin/apps/mvp',          // patched by setup.sh
     instances:   1,
     exec_mode:   'fork',
     autorestart: true,
@@ -11,34 +24,32 @@ module.exports = {
     max_memory_restart: '256M',
 
     env: {
-      NODE_ENV:          'production',
-      PORT:              3000,
+      NODE_ENV:         'production',
+      PORT:             3000,
 
-      // Database
-      DB_PATH:           '/home/admin/captive-portal/data/captive.db',
+      // ── Paths (patched by setup.sh at install time) ───────────────────
+      DB_PATH:   '/home/admin/apps/mvp/data/captive.db',  // patched
+      MEDIA_DIR: '/home/admin/apps/mvp/media',             // patched
 
-      // Media / video uploads
-      MEDIA_DIR:         '/home/admin/captive-portal/media',
+      // ── CORS ─────────────────────────────────────────────────────────
+      CORS_ORIGINS: 'http://captive.local,http://192.168.88.2',
 
-      // Admin dashboard token — CHANGE THIS
-      ADMIN_TOKEN:       'CHANGE_ME_ADMIN_TOKEN',
+      // ── After-grant fallback (if MikroTik provides no ?dst=) ─────────
+      SUCCESS_REDIRECT: 'http://www.google.com',
 
-      // CORS — portal (port 80 via nginx) + admin (port 8090)
-      CORS_ORIGINS:      'http://captive.local,http://192.168.88.2,http://192.168.88.2:8090',
+      // ── MikroTik Hotspot ─────────────────────────────────────────────
+      // Set MIKROTIK_MOCK=false in backend/.env when the router is ready.
+      // These are overridden by backend/.env if that file is present.
+      MIKROTIK_MOCK:    'true',   // ← change to 'false' for live mode
+      MIKROTIK_HOST:    '192.168.88.1',
+      MIKROTIK_HS_PORT: '80',
 
-      // MikroTik router
-      MIKROTIK_MOCK:     'false',
-      MIKROTIK_HOST:     '192.168.88.1',
-      MIKROTIK_USER:     'captive-api',
-      MIKROTIK_PASSWORD: 'm0t0m0t0',
-      MIKROTIK_PORT:     8728,
-
-      // Redirect after access granted
-      SUCCESS_REDIRECT:  'http://www.google.com',
+      // ── ADMIN_TOKEN is loaded from backend/.env — NOT set here ───────
+      // Setting it here would override dotenv and cause 401 in the admin.
     },
 
-    error_file:      '/home/admin/captive-portal/logs/error.log',
-    out_file:        '/home/admin/captive-portal/logs/out.log',
+    error_file:      '/home/admin/apps/mvp/logs/error.log',  // patched
+    out_file:        '/home/admin/apps/mvp/logs/out.log',     // patched
     log_date_format: 'YYYY-MM-DD HH:mm:ss',
     merge_logs:      true,
   }],

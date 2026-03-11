@@ -1,6 +1,6 @@
 const TOKEN_KEY = 'cp_admin_token';
-export const getToken  = () => localStorage.getItem(TOKEN_KEY) || '';
-export const setToken  = (t: string) => localStorage.setItem(TOKEN_KEY, t);
+export const getToken   = () => localStorage.getItem(TOKEN_KEY) || '';
+export const setToken   = (t: string) => localStorage.setItem(TOKEN_KEY, t);
 export const clearToken = () => localStorage.removeItem(TOKEN_KEY);
 
 async function req<T>(path: string, opts?: RequestInit, token?: string): Promise<T> {
@@ -17,6 +17,7 @@ async function req<T>(path: string, opts?: RequestInit, token?: string): Promise
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────
+
 export interface Campaign {
   id: string; slug: string; name: string; description: string;
   sponsor: string | null; primary_color: string; accent_color: string;
@@ -27,30 +28,68 @@ export interface Campaign {
   video_filename: string | null; video_original: string | null;
   total_sessions: number; granted_sessions: number;
 }
+
 export interface Video {
   id: string; campaign_id: string; title: string; description: string;
   filename: string; thumbnail_filename: string | null;
   duration_seconds: number; required_watch_pct: number;
   sort_order: number; active: number;
 }
-export interface SurveyQuestion { id: string; question: string; options: string[]; sort_order: number; }
-export interface Survey { id: string; campaign_id: string; title: string; questions: SurveyQuestion[]; }
+
+export interface SurveyQuestion {
+  id: string; question: string; options: string[]; sort_order: number;
+}
+
+export interface Survey {
+  id: string; campaign_id: string; title: string; questions: SurveyQuestion[];
+}
+
 export interface Session {
   id: string; campaign_id: string | null; campaign_name: string | null;
-  mac_address: string | null; ip_address: string; video_watched: number;
-  survey_done: number; access_granted: number; granted_at: string | null;
-  expires_at: string | null; created_at: string;
+  mac_address: string | null; ip_address: string; dst_url: string | null;
+  video_watched: boolean; survey_done: boolean; access_granted: boolean;
+  granted_at: string | null; expires_at: string | null; created_at: string;
 }
+
 export interface Stats {
   total: number; active: number; completed: number;
   watchedVideo: number; today: number; mikrotikActive: number;
 }
 
-// ── API ─────────────────────────────────────────────────────────────────────
+export interface MikrotikStatus {
+  ok: boolean; mode: string; host?: string; status?: number;
+  identity?: string; error?: string;
+}
+
+export interface HotspotClient {
+  address: string; mac: string; uptime: string; name: string;
+}
+
+/**
+ * RevokeResult — returned by DELETE /api/admin/sessions/:id
+ *
+ * logoutUrl: the MikroTik Hotspot logout URL to visit in a browser
+ *            to forcibly expire the router session. In mock mode, '/'.
+ * note:      human-readable explanation of what the admin needs to do next.
+ *
+ * In Hotspot mode the DB revoke is instant, but the router session will
+ * only end when the browser visits logoutUrl, or the session expires naturally.
+ */
+export interface RevokeResult {
+  success:   boolean;
+  logoutUrl: string;
+  note:      string;
+}
+
+// ── API ────────────────────────────────────────────────────────────────────
+
 export const api = {
   login:    (token: string) => req<Stats>('/stats', {}, token),
   stats:    () => req<Stats>('/stats'),
-  mikrotik: () => req<{ clients: Array<{ address: string; timeout: string; comment: string }> }>('/mikrotik/clients'),
+
+  // MikroTik Hotspot — simple connectivity test (no credentials needed)
+  mikrotik:        () => req<MikrotikStatus>('/mikrotik/status'),
+  mikrotikClients: () => req<{ clients: HotspotClient[] }>('/mikrotik/clients'),
 
   sessions: (p?: { limit?: number; offset?: number; campaign?: string }) => {
     const q = new URLSearchParams();
@@ -59,7 +98,9 @@ export const api = {
     if (p?.campaign) q.set('campaign', p.campaign);
     return req<{ sessions: Session[] }>(`/sessions?${q}`);
   },
-  revokeSession: (id: string) => req(`/sessions/${id}`, { method: 'DELETE' }),
+
+  revokeSession: (id: string) =>
+    req<RevokeResult>(`/sessions/${id}`, { method: 'DELETE' }),
 
   surveyResults: (campaignId?: string) =>
     req<{ aggregates: Record<string, { question: string; answers: Record<string, number> }> }>(
@@ -70,15 +111,18 @@ export const api = {
     req<{ campaigns: Campaign[] }>('/campaigns').then(r => r.campaigns),
 
   createCampaign: (data: Partial<Campaign> & { slug: string; name: string }) =>
-    req<{ campaign: Campaign }>('/campaigns', { method: 'POST', body: JSON.stringify(data) }).then(r => r.campaign),
+    req<{ campaign: Campaign }>('/campaigns', {
+      method: 'POST', body: JSON.stringify(data),
+    }).then(r => r.campaign),
 
   updateCampaign: (id: string, data: Partial<Campaign>) =>
-    req<{ campaign: Campaign }>(`/campaigns/${id}`, { method: 'PUT', body: JSON.stringify(data) }).then(r => r.campaign),
+    req<{ campaign: Campaign }>(`/campaigns/${id}`, {
+      method: 'PUT', body: JSON.stringify(data),
+    }).then(r => r.campaign),
 
   getVideos: (campaignId: string) =>
     req<{ videos: Video[] }>(`/campaigns/${campaignId}/videos`).then(r => r.videos),
 
-  // Multipart upload — never include Content-Type header (browser sets boundary)
   uploadVideo: (
     campaignId: string,
     file: File,
@@ -91,7 +135,7 @@ export const api = {
     fd.append('required_watch_pct', String(meta.required_watch_pct));
     return fetch(`/api/admin/campaigns/${campaignId}/videos`, {
       method: 'POST',
-      headers: { 'x-admin-token': getToken() }, // NO Content-Type — let browser set multipart boundary
+      headers: { 'x-admin-token': getToken() },
       body: fd,
     }).then(async r => {
       const json = await r.json();

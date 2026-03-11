@@ -36,6 +36,8 @@ export interface PortalStatus {
   accessGranted: boolean;
   active:        boolean;
   expiresAt:     string | null;
+  mac:           string | null;
+  dst:           string | null;
 }
 
 export interface SurveyQuestion {
@@ -63,17 +65,46 @@ export interface SurveyAnswer {
   question_id: string; question: string; answer: string;
 }
 
+export interface HotspotParams {
+  mac:      string | null;
+  ip:       string | null;
+  dst:      string | null;
+  identity: string | null;
+}
+
+/**
+ * Response from POST /api/:slug/access/grant
+ *
+ * hotspotLoginUrl  — the URL the BROWSER must visit to authenticate with MikroTik.
+ *                    In MOCK mode (MIKROTIK_MOCK=true) this is the SUCCESS_REDIRECT URL.
+ *                    In LIVE mode this is http://192.168.88.1/login?username=MAC&password=MAC&dst=...
+ *
+ * mock             — true when MIKROTIK_MOCK=true (dev/testing). Use this flag to decide
+ *                    whether to redirect to /success (mock) or window.location.href (live).
+ */
+export interface GrantResult {
+  success:         boolean;
+  expiresAt:       string;
+  hotspotLoginUrl: string;
+  mock:            boolean;
+}
+
 // ── API calls ──────────────────────────────────────────────────────────────
 
-// Public list of active campaigns — no auth required
 export const listCampaigns = () =>
   req<{ campaigns: CampaignSummary[] }>('/api/campaigns')
     .then(r => r.campaigns);
 
-// Per-slug portal calls
 export const portalApi = {
-  status: (slug: string) =>
-    req<PortalStatus>(`/api/${slug}/status`),
+  // Pass Hotspot params as query string so backend can store mac + dst on session
+  status: (slug: string, hotspot?: Partial<HotspotParams>) => {
+    const q = new URLSearchParams();
+    if (hotspot?.mac) q.set('mac', hotspot.mac);
+    if (hotspot?.ip)  q.set('ip',  hotspot.ip);
+    if (hotspot?.dst) q.set('dst', hotspot.dst);
+    const qs = q.toString();
+    return req<PortalStatus>(`/api/${slug}/status${qs ? '?' + qs : ''}`);
+  },
 
   config: (slug: string) =>
     req<CampaignConfig>(`/api/${slug}/config`),
@@ -90,8 +121,20 @@ export const portalApi = {
       body: JSON.stringify({ sessionId, answers }),
     }),
 
+  /**
+   * Grant access — returns GrantResult.
+   *
+   * MOCK mode  (mock=true):  hotspotLoginUrl is the success destination.
+   *                          Navigate to /success FIRST, THEN optionally
+   *                          open hotspotLoginUrl (it's just google.com / fallback).
+   *
+   * LIVE mode  (mock=false): hotspotLoginUrl is the MikroTik Hotspot login URL.
+   *                          Set window.location.href to it — the BROWSER visiting
+   *                          that URL is what actually authenticates with the router.
+   *                          MikroTik then redirects to dst automatically.
+   */
   grantAccess: (slug: string, sessionId: string) =>
-    req<{ success: boolean; expiresAt: string; redirectUrl: string }>(`/api/${slug}/access/grant`, {
+    req<GrantResult>(`/api/${slug}/access/grant`, {
       method: 'POST',
       body: JSON.stringify({ sessionId }),
     }),

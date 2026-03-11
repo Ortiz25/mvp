@@ -23,25 +23,38 @@ export function SurveyPage() {
     if (loading) return;
     if (status?.surveyDone)    { navigate('/success', { replace: true }); return; }
     if (!status?.videoWatched) { navigate('/watch',   { replace: true }); return; }
-    if (config && !config.survey?.questions?.length) handleGrantAccess();
+    // No questions — go straight to grant
+    if (config && !config.survey?.questions?.length) handleGrant();
   }, [loading, status, config]);
 
-  const handleGrantAccess = async () => {
+  // ── Grant access after survey submit ─────────────────────────────────────
+  const handleGrant = async () => {
     if (!status || !selectedSlug) return;
     setSubmitting(true);
     try {
-      await portalApi.grantAccess(selectedSlug, status.sessionId);
-      await refresh();
-      navigate('/success');
+      const result = await portalApi.grantAccess(selectedSlug, status.sessionId);
+      if (result.mock) {
+        // Dev / mock mode — stay in the SPA, show success page
+        await refresh();
+        navigate('/success', { replace: true });
+      } else {
+        // Live mode — browser must visit MikroTik Hotspot login URL.
+        // MikroTik authenticates the MAC and redirects to original dst.
+        // User will leave captive.local entirely — that's correct.
+        window.location.href = result.hotspotLoginUrl;
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to grant access');
-    } finally { setSubmitting(false); }
+      setSubmitting(false);
+    }
   };
 
   if (loading && !config) {
-    return <div className="flex items-center justify-center py-20">
-      <div className="w-8 h-8 rounded-full border-2 border-signal/30 border-t-signal animate-spin" />
-    </div>;
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="w-8 h-8 rounded-full border-2 border-signal/30 border-t-signal animate-spin" />
+      </div>
+    );
   }
 
   const questions = config?.survey?.questions ?? [];
@@ -63,23 +76,26 @@ export function SurveyPage() {
 
   const advance = async () => {
     if (!answered || !status || !selectedSlug) return;
+
+    // Not last question — slide to next
     if (!isLast) {
       setSliding(true);
       setTimeout(() => { setCurrent(c => c + 1); setSliding(false); }, 200);
       return;
     }
+
+    // Last question — submit survey then grant
     setSubmitting(true); setError('');
     try {
       const payload: SurveyAnswer[] = questions.map(qq => ({
         question_id: qq.id, question: qq.text, answer: answers[qq.id] ?? '',
       }));
       await portalApi.submitSurvey(selectedSlug, status.sessionId, payload);
-      await portalApi.grantAccess(selectedSlug, status.sessionId);
-      await refresh();
-      navigate('/success');
+      await handleGrant();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Submission failed');
-    } finally { setSubmitting(false); }
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -94,7 +110,6 @@ export function SurveyPage() {
             {config?.survey?.title ?? 'Quick Survey'}
           </h2>
         </div>
-        {/* Counter badge */}
         <div className="shrink-0 mt-1 bg-white/[0.05] border border-white/[0.08] rounded-xl
           px-3 py-2 text-center min-w-[52px]">
           <p className="font-mono text-[18px] font-medium text-white leading-none">{current + 1}</p>
@@ -102,13 +117,13 @@ export function SurveyPage() {
         </div>
       </div>
 
-      {/* Segmented progress */}
+      {/* Progress track */}
       <div className="flex gap-1.5 mb-5 animate-fade-up anim-d1">
         {questions.map((_, i) => (
           <div key={i} className={`h-[3px] rounded-full transition-all duration-500 ease-out
-            ${i < current  ? 'flex-1 bg-signal' :
-              i === current ? 'flex-[3] bg-white/50' :
-                              'flex-1 bg-white/[0.08]'}`} />
+            ${i < current   ? 'flex-1 bg-signal' :
+              i === current  ? 'flex-[3] bg-white/50' :
+                               'flex-1 bg-white/[0.08]'}`} />
         ))}
       </div>
 
@@ -117,7 +132,6 @@ export function SurveyPage() {
         <p className="font-display font-semibold text-[15px] text-white leading-snug mb-4 animate-fade-up anim-d2">
           {q.text}
         </p>
-
         <div className="flex flex-col gap-2 mb-5">
           {q.options.map((opt, i) => {
             const sel = answers[q.id] === opt;
@@ -126,7 +140,6 @@ export function SurveyPage() {
                 className={`opt-btn animate-fade-up ${sel ? 'opt-selected' : 'opt-idle'}`}
                 style={{ animationDelay: `${i * 40 + 100}ms` }}>
                 <div className="flex items-center gap-3">
-                  {/* Radio */}
                   <div className={`w-[18px] h-[18px] rounded-full border-[1.5px] shrink-0
                     flex items-center justify-center transition-all duration-150
                     ${sel ? 'border-signal bg-signal' : 'border-white/20'}`}>
@@ -150,7 +163,8 @@ export function SurveyPage() {
       <button onClick={advance} disabled={!answered || submitting}
         className="btn-primary flex items-center justify-center gap-2.5 animate-fade-up anim-d4">
         {submitting ? (
-          <><span className="w-4 h-4 rounded-full border-2 border-void/40 border-t-void animate-spin" /><span>Connecting…</span></>
+          <><span className="w-4 h-4 rounded-full border-2 border-void/40 border-t-void animate-spin" />
+          <span>Connecting…</span></>
         ) : isLast ? (
           <><span>Get Internet Access</span><IconArrow className="w-4 h-4" /></>
         ) : (

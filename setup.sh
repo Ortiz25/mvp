@@ -1,216 +1,278 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  CityNet Captive Portal v2 — Setup Script
-#  Run as the admin user from the project directory:  bash setup.sh
+#  CityNet Captive Portal — Raspberry Pi Setup Script
+#  MikroTik Hotspot edition — no RouterOS API credentials required
+#
+#  Usage:
+#    cd /home/admin/apps/mvp
+#    bash setup.sh
+#
+#  What it does:
+#    1.  Installs system packages (Node.js 20, nginx, PM2)
+#    2.  Creates required directories with correct permissions
+#    3.  Installs backend npm dependencies + runs DB migration
+#    4.  Builds frontend and admin React apps
+#    5.  Installs nginx config (patches paths to match BASE)
+#    6.  Creates backend/.env from example if not present
+#    7.  Patches ecosystem.config.cjs with correct BASE path
+#    8.  Starts the API with PM2 + registers autostart on boot
+#
+#  Dev vs Live mode:
+#    Default install uses MIKROTIK_MOCK=true (dev/testing).
+#    Change to MIKROTIK_MOCK=false in backend/.env once the
+#    MikroTik Hotspot config (mikrotik/mikrotik-hotspot.rsc) is applied.
 # =============================================================================
 set -euo pipefail
 
-GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; RED='\033[0;31m'; NC='\033[0m'
-ok()   { echo -e "${GREEN}[✓]${NC} $*"; }
-info() { echo -e "${BLUE}[→]${NC} $*"; }
-warn() { echo -e "${YELLOW}[!]${NC} $*"; }
-die()  { echo -e "${RED}[✗]${NC} $*"; exit 1; }
+# ── Colours ──────────────────────────────────────────────────────────────────
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'
+RED='\033[0;31m'; NC='\033[0m'; BOLD='\033[1m'
+ok()     { echo -e "${GREEN}[✓]${NC} $*"; }
+info()   { echo -e "${BLUE}[→]${NC} $*"; }
+warn()   { echo -e "${YELLOW}[!]${NC} $*"; }
+err()    { echo -e "${RED}[✗]${NC} $*"; exit 1; }
+header() { echo -e "\n${BOLD}${BLUE}── $* ──${NC}"; }
 
-# ── Resolve paths dynamically ─────────────────────────────────────────────
-# BASE = directory containing this script (works wherever you drop the project)
+# ── Spinner ──────────────────────────────────────────────────────────────────
+_spin_pid=""
+spin_start() {
+  local msg="${1:-Working…}"
+  local chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+  ( while true; do
+      for (( i=0; i<${#chars}; i++ )); do
+        echo -en "\r  ${BLUE}${chars:$i:1}${NC} $msg   " >&2
+        sleep 0.1
+      done
+    done ) &
+  _spin_pid=$!
+}
+spin_stop() {
+  if [[ -n "$_spin_pid" ]]; then kill "$_spin_pid" 2>/dev/null; _spin_pid=""; fi
+  echo -en "\r\033[K" >&2
+}
+
+# ── Detect base directory ─────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE="$SCRIPT_DIR"
+
+# ── Detect running user ───────────────────────────────────────────────────
 WHOAMI="$(whoami)"
-HOME_DIR="$(eval echo ~"$WHOAMI")"
+HOME_DIR="$(eval echo ~$WHOAMI)"
 
-ok "Running as user: $WHOAMI"
-ok "Project base:    $BASE"
-ok "Home dir:        $HOME_DIR"
+echo ""
+echo -e "${BOLD}CityNet Captive Portal — Setup${NC}"
+echo -e "  Base directory : ${BLUE}$BASE${NC}"
+echo -e "  Running as     : ${BLUE}$WHOAMI${NC}"
+echo -e "  Home           : ${BLUE}$HOME_DIR${NC}"
+echo ""
 
-# ── System packages ───────────────────────────────────────────────────────
-info "Updating system packages…"
-sudo apt-get update -qq && sudo apt-get upgrade -y -qq
+# ── Sanity checks ─────────────────────────────────────────────────────────
+[[ -d "$BASE/backend"  ]] || err "backend/ not found in $BASE"
+[[ -d "$BASE/frontend" ]] || err "frontend/ not found in $BASE"
+[[ -d "$BASE/admin"    ]] || err "admin/ not found in $BASE"
 
-# Node.js 20
-if ! node -v 2>/dev/null | grep -q "v20"; then
+# ── 1. System packages ────────────────────────────────────────────────────
+header "System packages"
+
+info "Updating apt…"
+sudo apt-get update -qq
+
+# Node.js 20 LTS
+if ! node -v 2>/dev/null | grep -q v20; then
   info "Installing Node.js 20 LTS…"
-  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - &>/dev/null
-  sudo apt-get install -y nodejs &>/dev/null
+  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - >/dev/null 2>&1
+  sudo apt-get install -y nodejs >/dev/null 2>&1
 fi
 ok "Node $(node -v)"
 
 # nginx
-sudo apt-get install -y nginx &>/dev/null
-ok "nginx ready"
+if ! command -v nginx &>/dev/null; then
+  sudo apt-get install -y nginx >/dev/null 2>&1
+fi
+ok "nginx $(nginx -v 2>&1 | grep -oP '[\d.]+')"
 
 # PM2
 if ! command -v pm2 &>/dev/null; then
-  sudo npm install -g pm2 &>/dev/null
+  info "Installing PM2 globally…"
+  sudo npm install -g pm2 >/dev/null 2>&1
 fi
 ok "PM2 $(pm2 -v)"
 
-# ── Directory structure ───────────────────────────────────────────────────
-info "Creating directory structure…"
-# Ensure the current user owns the project tree (handles root-owned uploads/git clones)
+# ── 2. Directories & permissions ─────────────────────────────────────────
+header "Directories"
+
+mkdir -p "$BASE"/{data,media,logs}
 sudo chown -R "$WHOAMI":"$WHOAMI" "$BASE"
-mkdir -p "$BASE/data" "$BASE/media" "$BASE/logs"
 
-# nginx (www-data) needs execute permission on every directory in the path
-# to serve static files. Home dirs default to 750 which blocks traversal.
-sudo chmod o+x "$HOME_DIR"
-sudo chmod o+x "$HOME_DIR/apps" 2>/dev/null || true   # may not exist as separate dir
-# Walk every component of BASE and ensure o+x
-_path=""
-for _part in $(echo "$BASE" | tr '/' ' '); do
-  _path="$_path/$_part"
-  [[ -d "$_path" ]] && sudo chmod o+x "$_path" 2>/dev/null || true
+# nginx needs execute (traverse) permission on every dir in the path
+_path="$BASE"
+while [[ "$_path" != "/" ]]; do
+  sudo chmod o+x "$_path" 2>/dev/null || true
+  _path="$(dirname "$_path")"
 done
-ok "Directories ready"
 
-# ── Backend deps + migration ──────────────────────────────────────────────
-info "Installing backend dependencies…"
+ok "Directories ready: data/ media/ logs/"
+
+# ── 3. Backend ────────────────────────────────────────────────────────────
+header "Backend"
+
+spin_start "Installing backend dependencies…"
 cd "$BASE/backend"
-npm install --production &>/dev/null
+npm install --production --silent
+spin_stop
 ok "Backend deps installed"
 
 info "Running DB migration…"
 node src/db/migrate.js
-ok "Database ready"
+ok "Database migrated + seeded"
 
-# ── Helper: run a long command with a live spinner ────────────────────────
-# Usage: run_step "Label" logfile cmd [args…]
-run_step() {
-  local label="$1" logfile="$2"; shift 2
-  local spinchars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-  "$@" >"$logfile" 2>&1 &
-  local pid=$! i=0
-  while kill -0 "$pid" 2>/dev/null; do
-    printf "\r  ${BLUE}%s${NC}  %s  " "${spinchars:$((i % ${#spinchars})):1}" "$label"
-    i=$((i + 1)); sleep 0.15
-  done
-  printf "\r\033[K"   # clear spinner line
-  wait "$pid" && return 0
-  # on failure print last 20 lines of log then abort
-  echo -e "${RED}[✗] FAILED: $label${NC}"
-  echo -e "${YELLOW}── last lines of $logfile ──${NC}"
-  tail -20 "$logfile"
-  exit 1
-}
+# ── 4. Frontend ───────────────────────────────────────────────────────────
+header "Frontend"
 
-# ── Purge stale source files not in current build ────────────────────────
-# Previous versions may have left pages/components that reference old APIs.
-info "Removing stale source files…"
-KNOWN_PAGES=(
-  "PickerPage.tsx" "VideoPage.tsx" "SurveyPage.tsx"
-  "SuccessPage.tsx" "OfflinePage.tsx"
-)
-PAGES_DIR="$BASE/frontend/src/pages"
-if [[ -d "$PAGES_DIR" ]]; then
-  for f in "$PAGES_DIR"/*.tsx; do
-    [[ -f "$f" ]] || continue
-    fname="$(basename "$f")"
-    known=false
-    for k in "${KNOWN_PAGES[@]}"; do [[ "$k" == "$fname" ]] && known=true && break; done
-    if [[ "$known" == false ]]; then
-      warn "Removing stale page: $fname"
-      rm -f "$f"
-    fi
-  done
-fi
-ok "Source tree clean"
+# Remove stale Vite build artifacts that can cause blank-page issues
+rm -f "$BASE/frontend/dist/index.html" 2>/dev/null || true
 
-# ── Frontend build ────────────────────────────────────────────────────────
-info "Installing frontend dependencies…"
+spin_start "Installing frontend dependencies…"
 cd "$BASE/frontend"
-run_step "npm install (frontend)" "$BASE/logs/frontend-install.log"  npm install
-ok "Frontend deps installed"
+npm install --silent
+spin_stop
 
-info "Building captive portal frontend…"
-run_step "npm run build (frontend)" "$BASE/logs/frontend-build.log"  npm run build
+spin_start "Building frontend…"
+npm run build --silent
+spin_stop
 ok "Frontend built → $BASE/frontend/dist"
 
-# ── Admin build ───────────────────────────────────────────────────────────
-info "Removing stale admin source files…"
-KNOWN_ADMIN_PAGES=(
-  "CampaignManager.tsx" "Sessions.tsx" "Overview.tsx"
-  "Login.tsx" "NotFound.tsx"
-)
-ADMIN_PAGES_DIR="$BASE/admin/src/pages"
-if [[ -d "$ADMIN_PAGES_DIR" ]]; then
-  for f in "$ADMIN_PAGES_DIR"/*.tsx; do
-    [[ -f "$f" ]] || continue
-    fname="$(basename "$f")"
-    known=false
-    for k in "${KNOWN_ADMIN_PAGES[@]}"; do [[ "$k" == "$fname" ]] && known=true && break; done
-    if [[ "$known" == false ]]; then
-      warn "Removing stale admin page: $fname"
-      rm -f "$f"
-    fi
-  done
-fi
+# ── 5. Admin ──────────────────────────────────────────────────────────────
+header "Admin"
 
-info "Installing admin dependencies…"
+rm -f "$BASE/admin/dist/index.html" 2>/dev/null || true
+
+spin_start "Installing admin dependencies…"
 cd "$BASE/admin"
-run_step "npm install (admin)" "$BASE/logs/admin-install.log"  npm install
-ok "Admin deps installed"
+npm install --silent
+spin_stop
 
-info "Building admin dashboard…"
-run_step "npm run build (admin)" "$BASE/logs/admin-build.log"  npm run build
+spin_start "Building admin…"
+npm run build --silent
+spin_stop
 ok "Admin built → $BASE/admin/dist"
 
-# ── nginx config ──────────────────────────────────────────────────────────
-info "Installing nginx config…"
-NGINX_SRC="$BASE/captive-portal.nginx"
-[[ -f "$NGINX_SRC" ]] || die "captive-portal.nginx not found at $NGINX_SRC"
-sudo cp "$NGINX_SRC" /etc/nginx/sites-available/captive-portal
+# ── 6. nginx config ───────────────────────────────────────────────────────
+header "nginx"
+
+NGINX_CONF="$BASE/captive-portal.nginx"
+[[ -f "$NGINX_CONF" ]] || err "captive-portal.nginx not found at $BASE"
+
+sudo cp "$NGINX_CONF" /etc/nginx/sites-available/captive-portal
+
+# Patch any legacy paths to use the current BASE
+sudo sed -i "s|/home/pi/captive-portal|$BASE|g"  /etc/nginx/sites-available/captive-portal
+sudo sed -i "s|/home/admin/apps/mvp|$BASE|g"     /etc/nginx/sites-available/captive-portal
+
+# Enable site, remove default
 sudo ln -sf /etc/nginx/sites-available/captive-portal /etc/nginx/sites-enabled/captive-portal
 sudo rm -f /etc/nginx/sites-enabled/default
+
 sudo nginx -t && sudo systemctl reload nginx
-ok "nginx configured"
+ok "nginx configured and reloaded"
 
-# ── /etc/hosts ────────────────────────────────────────────────────────────
-if ! grep -q "captive.local" /etc/hosts; then
-  echo "127.0.0.1  captive.local kolibri.local kiwix.local" | sudo tee -a /etc/hosts > /dev/null
+# ── 7. /etc/hosts ─────────────────────────────────────────────────────────
+header "Hosts"
+
+grep -q "captive.local" /etc/hosts || echo "127.0.0.1  captive.local" | sudo tee -a /etc/hosts >/dev/null
+grep -q "kolibri.local" /etc/hosts || echo "127.0.0.1  kolibri.local" | sudo tee -a /etc/hosts >/dev/null
+ok "/etc/hosts updated (captive.local, kolibri.local)"
+
+# ── 8. .env ───────────────────────────────────────────────────────────────
+header "Environment"
+
+ENV_FILE="$BASE/backend/.env"
+ENV_EXAMPLE="$BASE/backend/.env.example"
+
+if [[ ! -f "$ENV_FILE" ]]; then
+  cp "$ENV_EXAMPLE" "$ENV_FILE"
+  # Patch paths in .env
+  sed -i "s|/home/admin/apps/mvp|$BASE|g" "$ENV_FILE"
+  warn ".env created from example — EDIT IT BEFORE GOING LIVE:"
+  warn "  nano $ENV_FILE"
+  warn "  → Set ADMIN_TOKEN to something secure"
+  warn "  → Set MIKROTIK_MOCK=false once MikroTik Hotspot is configured"
+else
+  ok ".env already exists — skipping (edit manually if needed)"
 fi
-ok "Hosts updated"
 
-# ── .env ──────────────────────────────────────────────────────────────────
-if [[ ! -f "$BASE/backend/.env" ]]; then
-  cp "$BASE/backend/.env.example" "$BASE/backend/.env"
-  warn "Created $BASE/backend/.env from example — edit it before using in production!"
-fi
+# ── 9. ecosystem.config.cjs — patch BASE path ─────────────────────────────
+header "PM2 config"
 
-# ── ecosystem.config.cjs — patch BASE path dynamically ───────────────────
-ECOSYSTEM="$BASE/ecosystem.config.cjs"
-[[ -f "$ECOSYSTEM" ]] || die "ecosystem.config.cjs not found at $ECOSYSTEM"
+ECOS="$BASE/ecosystem.config.cjs"
+[[ -f "$ECOS" ]] || err "ecosystem.config.cjs not found at $BASE"
 
-# Patch the cwd and env paths in ecosystem to use actual BASE
-sed -i "s|cwd:.*|cwd: '$BASE/backend',|g" "$ECOSYSTEM"
-sed -i "s|DB_PATH:.*|DB_PATH: '$BASE/data/captive.db',|g" "$ECOSYSTEM"
-sed -i "s|MEDIA_DIR:.*|MEDIA_DIR: '$BASE/media',|g" "$ECOSYSTEM"
-ok "ecosystem.config.cjs patched for $BASE"
+sed -i "s|cwd:.*'.*'|cwd:         '$BASE'|"                             "$ECOS"
+sed -i "s|DB_PATH:.*'.*'|DB_PATH:   '$BASE/data/captive.db'|"           "$ECOS"
+sed -i "s|MEDIA_DIR:.*'.*'|MEDIA_DIR: '$BASE/media'|"                   "$ECOS"
+sed -i "s|error_file:.*'.*'|error_file: '$BASE/logs/error.log'|"        "$ECOS"
+sed -i "s|out_file:.*'.*'|out_file:   '$BASE/logs/out.log'|"            "$ECOS"
 
-# ── PM2 startup ───────────────────────────────────────────────────────────
-info "Starting backend with PM2…"
+ok "ecosystem.config.cjs paths updated → $BASE"
+
+# ── 10. PM2 start ─────────────────────────────────────────────────────────
+header "PM2"
+
 cd "$BASE"
+
+pm2 delete captive-api 2>/dev/null || true
 pm2 start ecosystem.config.cjs
 pm2 save
 
-# Generate and apply the startup command for the current user
-STARTUP_CMD=$(sudo env PATH="$PATH:/usr/bin" pm2 startup systemd -u "$WHOAMI" --hp "$HOME_DIR" | grep "sudo " | tail -1)
+# Register PM2 startup
+STARTUP_CMD=$(pm2 startup systemd -u "$WHOAMI" --hp "$HOME_DIR" 2>&1 | grep "sudo env" | head -1)
 if [[ -n "$STARTUP_CMD" ]]; then
   eval "$STARTUP_CMD"
-  ok "PM2 registered for boot (user: $WHOAMI)"
+  ok "PM2 startup registered for $WHOAMI"
 else
-  warn "Could not auto-register PM2 startup — run manually: pm2 startup"
+  warn "Could not auto-register PM2 startup — run manually:"
+  warn "  sudo env PATH=\$PATH:/usr/bin pm2 startup systemd -u $WHOAMI --hp $HOME_DIR"
 fi
 
-# ── Done ──────────────────────────────────────────────────────────────────
+ok "PM2 started: captive-api"
+
+# ── Done ─────────────────────────────────────────────────────────────────
+PI_IP=$(hostname -I | awk '{print $1}')
+
 echo ""
-echo -e "${GREEN}══════════════════════════════════════════════${NC}"
-echo -e "${GREEN}  ✅  Setup complete!${NC}"
-echo -e "${GREEN}══════════════════════════════════════════════${NC}"
+echo -e "${GREEN}${BOLD}══════════════════════════════════════════════════════════${NC}"
+echo -e "${GREEN}${BOLD}  ✅  Setup complete!${NC}"
+echo -e "${GREEN}${BOLD}══════════════════════════════════════════════════════════${NC}"
 echo ""
-echo -e "  Portal:  ${BLUE}http://captive.local${NC}"
-echo -e "  Admin:   ${BLUE}http://192.168.88.2:8090${NC}"
-echo -e "  API:     ${BLUE}http://192.168.88.2:3000/api/campaigns${NC}"
+echo -e "  Portal  :  ${BLUE}http://captive.local${NC}   or  ${BLUE}http://$PI_IP${NC}"
+echo -e "  Admin   :  ${BLUE}http://$PI_IP:8090${NC}"
+echo -e "  API     :  ${BLUE}http://$PI_IP:3000/health${NC}"
 echo ""
-echo -e "  Next steps:"
-echo -e "  1. ${YELLOW}nano $BASE/backend/.env${NC}  ← set MIKROTIK_PASSWORD + ADMIN_TOKEN"
-echo -e "  2. Apply MikroTik config from ${YELLOW}$BASE/mikrotik/${NC}"
-echo -e "  3. ${YELLOW}sudo reboot${NC}"
+echo -e "${YELLOW}${BOLD}  ── Next steps ──────────────────────────────────────────${NC}"
+echo ""
+echo -e "  1. Set a secure admin token + choose mode:"
+echo -e "     ${YELLOW}nano $ENV_FILE${NC}"
+echo -e "     → ADMIN_TOKEN=your-secret-here"
+echo -e "     → MIKROTIK_MOCK=true   ← keep for dev/testing"
+echo -e "     → MIKROTIK_MOCK=false  ← set when router is ready"
+echo ""
+echo -e "  2. Apply MikroTik Hotspot config in Winbox / Terminal:"
+echo -e "     Paste: ${YELLOW}$BASE/mikrotik/mikrotik-hotspot.rsc${NC}"
+echo -e "     (Replace XX:XX:XX:XX:XX:XX with the Pi's MAC address)"
+echo ""
+echo -e "  3. Reload the API after editing .env:"
+echo -e "     ${YELLOW}pm2 restart captive-api --update-env${NC}"
+echo ""
+echo -e "  4. Verify the API is running:"
+echo -e "     ${YELLOW}pm2 status${NC}"
+echo -e "     ${YELLOW}curl http://localhost:3000/health${NC}"
+echo ""
+echo -e "  5. Reboot to verify autostart:"
+echo -e "     ${YELLOW}sudo reboot${NC}"
+echo ""
+echo -e "  Useful commands:"
+echo -e "     ${BLUE}pm2 logs captive-api --lines 50${NC}"
+echo -e "     ${BLUE}sudo nginx -t && sudo systemctl reload nginx${NC}"
+echo -e "     ${BLUE}sudo tail -30 /var/log/nginx/error.log${NC}"
+echo -e "     ${BLUE}curl -H 'x-admin-token: your-token' http://localhost:3000/api/admin/stats${NC}"
+echo ""

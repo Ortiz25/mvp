@@ -22,46 +22,83 @@ export function VideoPage() {
   useEffect(() => {
     if (!selectedSlug) { navigate('/', { replace: true }); return; }
     refresh();
+    return () => clearInterval(timerRef.current);
   }, [selectedSlug]);
 
   useEffect(() => {
-    if (!loading && status?.videoWatched) {
+    if (loading || !status) return;
+    if (status.videoWatched) {
+      // Video already marked — move on
       config?.survey?.questions?.length
         ? navigate('/survey', { replace: true })
-        : navigate('/success', { replace: true });
+        : handleNoSurveyGrant();
     }
-    return () => clearInterval(timerRef.current);
   }, [loading, status, config]);
 
+  // ── No-survey path: grant directly after video ──────────────────────────
+  const handleNoSurveyGrant = async () => {
+    if (!status || !selectedSlug) return;
+    setSubmitting(true);
+    try {
+      const result = await portalApi.grantAccess(selectedSlug, status.sessionId);
+      if (result.mock) {
+        await refresh();
+        navigate('/success', { replace: true });
+      } else {
+        window.location.href = result.hotspotLoginUrl;
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to grant access');
+      setSubmitting(false);
+    }
+  };
+
+  // ── Continue button: mark watched then advance ──────────────────────────
+  const handleContinue = async () => {
+    if (!status || !selectedSlug || submitting) return;
+    setSubmitting(true); setError('');
+    try {
+      await portalApi.videoComplete(selectedSlug, status.sessionId, progress);
+      if (config?.survey?.questions?.length) {
+        await refresh();
+        navigate('/survey');
+      } else {
+        // No survey — grant immediately
+        const result = await portalApi.grantAccess(selectedSlug, status.sessionId);
+        if (result.mock) {
+          await refresh();
+          navigate('/success');
+        } else {
+          window.location.href = result.hotspotLoginUrl;
+        }
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save progress');
+      setSubmitting(false);
+    }
+  };
+
+  // ── Dev simulated playback ──────────────────────────────────────────────
   const toggleDemo = () => {
     if (done) return;
-    if (playing) { clearInterval(timerRef.current); setPlaying(false); }
-    else {
+    if (playing) {
+      clearInterval(timerRef.current);
+      setPlaying(false);
+    } else {
       setPlaying(true);
       timerRef.current = setInterval(() => {
         setProgress(p => {
-          const next = p + 1 / (duration * 4);
+          const next = p + 1 / (duration * 4); // ~4 ticks/sec → reaches 100% in duration seconds
           if (next >= required) {
             clearInterval(timerRef.current);
-            setPlaying(false); setDone(true);
+            setPlaying(false);
+            setDone(true);
             return Math.min(next, 1);
           }
           return next;
         });
       }, 100);
     }
-  };
-
-  const handleContinue = async () => {
-    if (!status || !selectedSlug || submitting) return;
-    setSubmitting(true); setError('');
-    try {
-      await portalApi.videoComplete(selectedSlug, status.sessionId, progress);
-      await refresh();
-      config?.survey?.questions?.length ? navigate('/survey') : navigate('/success');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to save progress');
-    } finally { setSubmitting(false); }
   };
 
   const pct    = Math.round(progress * 100);
@@ -72,6 +109,16 @@ export function VideoPage() {
     return (
       <div className="flex items-center justify-center py-20">
         <div className="w-8 h-8 rounded-full border-2 border-signal/30 border-t-signal animate-spin" />
+      </div>
+    );
+  }
+
+  // No-survey granting spinner
+  if (submitting && !config?.survey?.questions?.length) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 gap-3">
+        <div className="w-8 h-8 rounded-full border-2 border-signal/30 border-t-signal animate-spin" />
+        <p className="text-sm text-white/40 font-body">Connecting to internet…</p>
       </div>
     );
   }
@@ -96,27 +143,33 @@ export function VideoPage() {
         border border-white/[0.08] bg-night relative" style={{ aspectRatio: '16/9' }}>
 
         {video?.url ? (
-          <video src={video.url} className="w-full h-full object-cover" controls playsInline
+          // Real video file
+          <video
+            src={video.url}
+            className="w-full h-full object-cover"
+            controls
+            playsInline
             onTimeUpdate={e => {
-              const v = e.currentTarget;
-              const p = v.currentTime / (v.duration || duration);
-              setProgress(p);
-              if (p >= required) setDone(true);
+              const v   = e.currentTarget;
+              const pct = v.currentTime / (v.duration || duration);
+              setProgress(pct);
+              if (pct >= required) setDone(true);
             }}
           />
         ) : (
-          /* Dev-mode placeholder */
+          // Dev placeholder — tap to simulate playback
           <button onClick={toggleDemo}
             className="absolute inset-0 w-full flex flex-col items-center justify-center gap-3 group">
-            {/* Scan line animation when playing */}
+            {/* Scan-line animation while playing */}
             {playing && (
               <div className="absolute inset-0 overflow-hidden pointer-events-none">
-                <div className="absolute w-full h-8 bg-gradient-to-b from-transparent via-signal/5 to-transparent animate-scan" />
+                <div className="absolute w-full h-8 bg-gradient-to-b from-transparent
+                  via-signal/5 to-transparent animate-scan" />
               </div>
             )}
             <div className={`relative w-14 h-14 rounded-full border-2 flex items-center justify-center
               transition-all duration-300
-              ${done    ? 'border-signal bg-signal/20 text-signal shadow-signal'
+              ${done    ? 'border-signal bg-signal/20 text-signal'
               : playing ? 'border-white/40 bg-white/10 text-white/80 scale-95'
                         : 'border-white/20 bg-white/[0.05] text-white/40 group-hover:border-white/30 group-hover:text-white/60'}`}>
               {done
@@ -127,25 +180,33 @@ export function VideoPage() {
               }
             </div>
             <p className="relative text-[11px] text-white/35 font-body px-6 text-center leading-relaxed">
-              {done ? 'Video complete — tap Continue'
-               : playing ? 'Tap to pause'
+              {done        ? 'Video complete — tap Continue below'
+               : playing   ? 'Tap to pause'
                : progress > 0 ? 'Paused — tap to resume'
                : 'No video uploaded · tap to simulate (dev mode)'}
             </p>
+            {/* Dev mode badge */}
+            {!done && (
+              <span className="absolute top-3 right-3 text-[8px] font-mono font-bold
+                px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400/60">
+                DEV
+              </span>
+            )}
           </button>
         )}
 
-        {/* Progress bar at bottom */}
+        {/* Progress bar overlay */}
         <div className="absolute bottom-0 left-0 right-0">
-          <div className="h-[3px] bg-black/50">
+          <div className="h-[3px] bg-black/50 relative">
             <div className="prog-fill h-full" style={{ width: `${pct}%` }} />
+            {/* Required threshold marker */}
             <div className="absolute top-0 h-full w-0.5 bg-white/50 -translate-x-px"
               style={{ left: `${reqPct}%` }} />
           </div>
         </div>
       </div>
 
-      {/* Progress stats */}
+      {/* Progress row */}
       <div className="flex items-center justify-between mb-4 animate-fade-up anim-d2">
         <div className="flex items-center gap-2.5">
           <div className="prog-track w-28">
@@ -155,9 +216,9 @@ export function VideoPage() {
         </div>
         <span className={`text-[11px] font-display font-semibold transition-colors duration-300
           ${ready ? 'text-signal' : 'text-white/25'}`}>
-          {ready ? (
-            <span className="flex items-center gap-1"><IconCheck className="w-3.5 h-3.5" /> Ready</span>
-          ) : `${reqPct - pct}% remaining`}
+          {ready
+            ? <span className="flex items-center gap-1"><IconCheck className="w-3.5 h-3.5" /> Ready</span>
+            : `${reqPct - pct}% remaining`}
         </span>
       </div>
 
@@ -167,11 +228,12 @@ export function VideoPage() {
         </div>
       )}
 
-      {/* CTA */}
       <div className="animate-fade-up anim-d3">
-        <button onClick={handleContinue} disabled={!ready || submitting} className="btn-primary flex items-center justify-center gap-2.5">
+        <button onClick={handleContinue} disabled={!ready || submitting}
+          className="btn-primary flex items-center justify-center gap-2.5">
           {submitting ? (
-            <><span className="w-4 h-4 rounded-full border-2 border-void/40 border-t-void animate-spin" /><span>Saving…</span></>
+            <><span className="w-4 h-4 rounded-full border-2 border-void/40 border-t-void animate-spin" />
+            <span>Connecting…</span></>
           ) : ready ? (
             <><span>{config?.survey?.questions?.length ? 'Continue to Survey' : 'Get Internet Access'}</span>
             <IconArrow className="w-4 h-4" /></>
