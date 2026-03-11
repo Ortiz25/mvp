@@ -49,6 +49,17 @@ info "Creating directory structure…"
 # Ensure the current user owns the project tree (handles root-owned uploads/git clones)
 sudo chown -R "$WHOAMI":"$WHOAMI" "$BASE"
 mkdir -p "$BASE/data" "$BASE/media" "$BASE/logs"
+
+# nginx (www-data) needs execute permission on every directory in the path
+# to serve static files. Home dirs default to 750 which blocks traversal.
+sudo chmod o+x "$HOME_DIR"
+sudo chmod o+x "$HOME_DIR/apps" 2>/dev/null || true   # may not exist as separate dir
+# Walk every component of BASE and ensure o+x
+_path=""
+for _part in $(echo "$BASE" | tr '/' ' '); do
+  _path="$_path/$_part"
+  [[ -d "$_path" ]] && sudo chmod o+x "$_path" 2>/dev/null || true
+done
 ok "Directories ready"
 
 # ── Backend deps + migration ──────────────────────────────────────────────
