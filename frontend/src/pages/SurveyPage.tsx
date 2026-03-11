@@ -4,6 +4,42 @@ import { usePortal } from '../context/SessionContext';
 import { portalApi, SurveyAnswer } from '../lib/api';
 import { IconArrow, IconCheck, IconUnlock } from '../components/layout/Shell';
 
+// Persist grant state across page reloads (MikroTik bounces back to captive.local)
+const GRANT_KEY = 'cp_granted';
+
+function setGrantedFlag() {
+  try { sessionStorage.setItem(GRANT_KEY, '1'); } catch {}
+}
+function clearGrantedFlag() {
+  try { sessionStorage.removeItem(GRANT_KEY); } catch {}
+}
+function isGrantedFlagSet() {
+  try { return sessionStorage.getItem(GRANT_KEY) === '1'; } catch { return false; }
+}
+
+// ── Connecting overlay ──────────────────────────────────────────────────────
+function ConnectingScreen() {
+  return (
+    <div className="flex flex-col items-center justify-center py-20 gap-4 animate-fade-in">
+      <div className="relative">
+        <div className="absolute inset-0 rounded-full bg-signal/20 animate-ping-slow" />
+        <div className="relative w-16 h-16 rounded-full bg-gradient-to-br from-signal to-aqua
+          flex items-center justify-center">
+          <IconUnlock className="w-7 h-7 text-void" />
+        </div>
+      </div>
+      <div className="text-center">
+        <p className="font-display font-bold text-white text-lg mb-1">Connecting…</p>
+        <p className="text-sm text-white/40 font-body">Authorizing your device with the router</p>
+      </div>
+      <div className="w-6 h-6 rounded-full border-2 border-signal/40 border-t-signal animate-spin mt-2" />
+      <p className="text-[10px] text-white/20 font-body text-center px-8 mt-2">
+        You will be redirected to the internet automatically.
+      </p>
+    </div>
+  );
+}
+
 export function SurveyPage() {
   const { selectedSlug, status, config, loading, refresh } = usePortal();
   const navigate = useNavigate();
@@ -12,11 +48,11 @@ export function SurveyPage() {
   const [answers,    setAnswers]    = useState<Record<string, string>>({});
   const [sliding,    setSliding]    = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [granted,    setGranted]    = useState(false);   // ← blocks useEffect guards after grant
   const [error,      setError]      = useState('');
 
-  // ref so useEffect closure always sees latest value
-  const grantedRef = useRef(false);
+  // granted: true = show connecting screen, block all navigation guards
+  const [granted, setGranted] = useState(() => isGrantedFlagSet());
+  const grantedRef = useRef(granted);
 
   useEffect(() => {
     if (!selectedSlug) { navigate('/', { replace: true }); return; }
@@ -24,49 +60,49 @@ export function SurveyPage() {
   }, [selectedSlug]);
 
   useEffect(() => {
-    // Once we've granted, stop ALL navigation guards — the browser is leaving.
-    if (grantedRef.current) return;
+    if (grantedRef.current) return; // already granting — don't interfere
     if (loading) return;
     if (status?.surveyDone)    { navigate('/success', { replace: true }); return; }
     if (!status?.videoWatched) { navigate('/watch',   { replace: true }); return; }
     if (config && !config.survey?.questions?.length) doGrant();
   }, [loading, status, config]);
 
-  // ── Grant internet access ─────────────────────────────────────────────────
   const doGrant = async () => {
     if (!status || !selectedSlug) return;
-    grantedRef.current = true;   // stop useEffect guards immediately
+    // Set flag in both ref and sessionStorage BEFORE any async work
+    grantedRef.current = true;
+    setGrantedFlag();
     setGranted(true);
     setSubmitting(true);
     try {
       const result = await portalApi.grantAccess(selectedSlug, status.sessionId);
       if (result.mock) {
+        clearGrantedFlag();
         await refresh();
         navigate('/success', { replace: true });
       } else {
-        // Live mode: send browser to MikroTik login URL.
-        // Use replace so pressing Back doesn't re-submit.
+        // Live: redirect browser to MikroTik login URL.
+        // MikroTik will authenticate MAC and redirect to google.com (or dst).
+        // The sessionStorage flag ensures if captive.local reloads, we show
+        // the connecting screen instead of restarting the picker flow.
         window.location.replace(result.hotspotLoginUrl);
       }
     } catch (e) {
       grantedRef.current = false;
+      clearGrantedFlag();
       setGranted(false);
       setSubmitting(false);
       setError(e instanceof Error ? e.message : 'Failed to grant access');
     }
   };
 
-  // ── Advance through questions / submit ────────────────────────────────────
   const advance = async () => {
     if (!answered || !status || !selectedSlug || submitting) return;
-
     if (!isLast) {
       setSliding(true);
       setTimeout(() => { setCurrent(c => c + 1); setSliding(false); }, 200);
       return;
     }
-
-    // Last question — submit then grant
     setSubmitting(true); setError('');
     try {
       const payload: SurveyAnswer[] = questions.map(qq => ({
@@ -80,26 +116,8 @@ export function SurveyPage() {
     }
   };
 
-  // ── Full-screen connecting overlay ────────────────────────────────────────
-  // Show immediately after grant so user never sees a flash back to picker
-  if (granted) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 gap-4 animate-fade-in">
-        <div className="relative">
-          <div className="absolute inset-0 rounded-full bg-signal/20 animate-ping-slow" />
-          <div className="relative w-16 h-16 rounded-full bg-gradient-to-br from-signal to-aqua
-            flex items-center justify-center">
-            <IconUnlock className="w-7 h-7 text-void" />
-          </div>
-        </div>
-        <div className="text-center">
-          <p className="font-display font-bold text-white text-lg mb-1">Connecting…</p>
-          <p className="text-sm text-white/40 font-body">Authorizing your device</p>
-        </div>
-        <div className="w-6 h-6 rounded-full border-2 border-signal/40 border-t-signal animate-spin mt-2" />
-      </div>
-    );
-  }
+  // Show connecting screen immediately if flag is set (survives reload)
+  if (granted) return <ConnectingScreen />;
 
   if (loading && !config) {
     return (
@@ -127,7 +145,6 @@ export function SurveyPage() {
 
   return (
     <div className="px-5 py-5">
-      {/* Header */}
       <div className="flex items-start justify-between mb-4 animate-fade-up">
         <div className="flex-1 min-w-0 mr-3">
           <p className="text-[9px] font-display font-bold uppercase tracking-[0.2em] text-signal/60 mb-1.5">
@@ -144,7 +161,6 @@ export function SurveyPage() {
         </div>
       </div>
 
-      {/* Progress track */}
       <div className="flex gap-1.5 mb-5 animate-fade-up anim-d1">
         {questions.map((_, i) => (
           <div key={i} className={`h-[3px] rounded-full transition-all duration-500 ease-out
@@ -154,7 +170,6 @@ export function SurveyPage() {
         ))}
       </div>
 
-      {/* Question */}
       <div className={`transition-all duration-200 ${sliding ? 'opacity-0 translate-x-2' : 'opacity-100 translate-x-0'}`}>
         <p className="font-display font-semibold text-[15px] text-white leading-snug mb-4 animate-fade-up anim-d2">
           {q.text}

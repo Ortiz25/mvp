@@ -4,6 +4,33 @@ import { usePortal } from '../context/SessionContext';
 import { portalApi } from '../lib/api';
 import { IconPlay, IconArrow, IconCheck, IconUnlock } from '../components/layout/Shell';
 
+const GRANT_KEY = 'cp_granted';
+const setGrantedFlag   = () => { try { sessionStorage.setItem(GRANT_KEY, '1'); } catch {} };
+const clearGrantedFlag = () => { try { sessionStorage.removeItem(GRANT_KEY); } catch {} };
+const isGrantedFlagSet = () => { try { return sessionStorage.getItem(GRANT_KEY) === '1'; } catch { return false; } };
+
+function ConnectingScreen() {
+  return (
+    <div className="flex flex-col items-center justify-center py-20 gap-4 animate-fade-in">
+      <div className="relative">
+        <div className="absolute inset-0 rounded-full bg-signal/20 animate-ping-slow" />
+        <div className="relative w-16 h-16 rounded-full bg-gradient-to-br from-signal to-aqua
+          flex items-center justify-center">
+          <IconUnlock className="w-7 h-7 text-void" />
+        </div>
+      </div>
+      <div className="text-center">
+        <p className="font-display font-bold text-white text-lg mb-1">Connecting…</p>
+        <p className="text-sm text-white/40 font-body">Authorizing your device with the router</p>
+      </div>
+      <div className="w-6 h-6 rounded-full border-2 border-signal/40 border-t-signal animate-spin mt-2" />
+      <p className="text-[10px] text-white/20 font-body text-center px-8 mt-2">
+        You will be redirected to the internet automatically.
+      </p>
+    </div>
+  );
+}
+
 export function VideoPage() {
   const { selectedSlug, status, config, loading, refresh } = usePortal();
   const navigate = useNavigate();
@@ -12,10 +39,10 @@ export function VideoPage() {
   const [playing,    setPlaying]    = useState(false);
   const [done,       setDone]       = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [granted,    setGranted]    = useState(false);   // blocks guards after grant
   const [error,      setError]      = useState('');
+  const [granted,    setGranted]    = useState(() => isGrantedFlagSet());
+  const grantedRef = useRef(granted);
   const timerRef   = useRef<ReturnType<typeof setInterval>>();
-  const grantedRef = useRef(false);
 
   const video    = config?.video;
   const required = video?.requiredWatchPct ?? 0.8;
@@ -33,19 +60,20 @@ export function VideoPage() {
     if (status.videoWatched) {
       config?.survey?.questions?.length
         ? navigate('/survey', { replace: true })
-        : doNoSurveyGrant();
+        : doGrant();
     }
   }, [loading, status, config]);
 
-  // ── No-survey path: grant directly after video ──────────────────────────
-  const doNoSurveyGrant = async () => {
+  const doGrant = async () => {
     if (!status || !selectedSlug || grantedRef.current) return;
     grantedRef.current = true;
+    setGrantedFlag();
     setGranted(true);
     setSubmitting(true);
     try {
       const result = await portalApi.grantAccess(selectedSlug, status.sessionId);
       if (result.mock) {
+        clearGrantedFlag();
         await refresh();
         navigate('/success', { replace: true });
       } else {
@@ -53,13 +81,13 @@ export function VideoPage() {
       }
     } catch (e) {
       grantedRef.current = false;
+      clearGrantedFlag();
       setGranted(false);
       setError(e instanceof Error ? e.message : 'Failed to grant access');
       setSubmitting(false);
     }
   };
 
-  // ── Continue button: mark watched then advance ──────────────────────────
   const handleContinue = async () => {
     if (!status || !selectedSlug || submitting) return;
     setSubmitting(true); setError('');
@@ -69,11 +97,12 @@ export function VideoPage() {
         await refresh();
         navigate('/survey');
       } else {
-        // No survey — grant immediately
         grantedRef.current = true;
+        setGrantedFlag();
         setGranted(true);
         const result = await portalApi.grantAccess(selectedSlug, status.sessionId);
         if (result.mock) {
+          clearGrantedFlag();
           await refresh();
           navigate('/success');
         } else {
@@ -82,18 +111,17 @@ export function VideoPage() {
       }
     } catch (e) {
       grantedRef.current = false;
+      clearGrantedFlag();
       setGranted(false);
       setError(e instanceof Error ? e.message : 'Failed to save progress');
       setSubmitting(false);
     }
   };
 
-  // ── Dev simulated playback ──────────────────────────────────────────────
   const toggleDemo = () => {
     if (done) return;
     if (playing) {
-      clearInterval(timerRef.current);
-      setPlaying(false);
+      clearInterval(timerRef.current); setPlaying(false);
     } else {
       setPlaying(true);
       timerRef.current = setInterval(() => {
@@ -101,8 +129,7 @@ export function VideoPage() {
           const next = p + 1 / (duration * 4);
           if (next >= required) {
             clearInterval(timerRef.current);
-            setPlaying(false);
-            setDone(true);
+            setPlaying(false); setDone(true);
             return Math.min(next, 1);
           }
           return next;
@@ -111,25 +138,7 @@ export function VideoPage() {
     }
   };
 
-  // ── Connecting overlay ────────────────────────────────────────────────────
-  if (granted) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 gap-4 animate-fade-in">
-        <div className="relative">
-          <div className="absolute inset-0 rounded-full bg-signal/20 animate-ping-slow" />
-          <div className="relative w-16 h-16 rounded-full bg-gradient-to-br from-signal to-aqua
-            flex items-center justify-center">
-            <IconUnlock className="w-7 h-7 text-void" />
-          </div>
-        </div>
-        <div className="text-center">
-          <p className="font-display font-bold text-white text-lg mb-1">Connecting…</p>
-          <p className="text-sm text-white/40 font-body">Authorizing your device</p>
-        </div>
-        <div className="w-6 h-6 rounded-full border-2 border-signal/40 border-t-signal animate-spin mt-2" />
-      </div>
-    );
-  }
+  if (granted) return <ConnectingScreen />;
 
   if (loading && !config) {
     return (
@@ -145,7 +154,6 @@ export function VideoPage() {
 
   return (
     <div className="px-5 py-5">
-      {/* Header */}
       <div className="mb-4 animate-fade-up">
         <p className="text-[9px] font-display font-bold uppercase tracking-[0.2em] text-signal/60 mb-1.5">
           Step 02 — Watch Video
@@ -158,101 +166,70 @@ export function VideoPage() {
         </p>
       </div>
 
-      {/* Video player */}
       <div className="animate-fade-up anim-d1 mb-3 rounded-2xl overflow-hidden
         border border-white/[0.08] bg-night relative" style={{ aspectRatio: '16/9' }}>
-
         {video?.url ? (
-          <video
-            src={video.url}
-            className="w-full h-full object-cover"
-            controls
-            playsInline
+          <video src={video.url} className="w-full h-full object-cover" controls playsInline
             onTimeUpdate={e => {
               const v = e.currentTarget;
               const p = v.currentTime / (v.duration || duration);
               setProgress(p);
               if (p >= required) setDone(true);
-            }}
-          />
+            }} />
         ) : (
           <button onClick={toggleDemo}
             className="absolute inset-0 w-full flex flex-col items-center justify-center gap-3 group">
             {playing && (
               <div className="absolute inset-0 overflow-hidden pointer-events-none">
-                <div className="absolute w-full h-8 bg-gradient-to-b from-transparent
-                  via-signal/5 to-transparent animate-scan" />
+                <div className="absolute w-full h-8 bg-gradient-to-b from-transparent via-signal/5 to-transparent animate-scan" />
               </div>
             )}
             <div className={`relative w-14 h-14 rounded-full border-2 flex items-center justify-center
               transition-all duration-300
-              ${done    ? 'border-signal bg-signal/20 text-signal'
+              ${done ? 'border-signal bg-signal/20 text-signal'
               : playing ? 'border-white/40 bg-white/10 text-white/80 scale-95'
-                        : 'border-white/20 bg-white/[0.05] text-white/40 group-hover:border-white/30 group-hover:text-white/60'}`}>
-              {done
-                ? <IconCheck className="w-6 h-6" />
-                : playing
-                ? <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-                : <IconPlay className="w-6 h-6" />
-              }
+              : 'border-white/20 bg-white/[0.05] text-white/40 group-hover:border-white/30 group-hover:text-white/60'}`}>
+              {done ? <IconCheck className="w-6 h-6" />
+                : playing ? <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                : <IconPlay className="w-6 h-6" />}
             </div>
             <p className="relative text-[11px] text-white/35 font-body px-6 text-center leading-relaxed">
-              {done        ? 'Video complete — tap Continue below'
-               : playing   ? 'Tap to pause'
+              {done ? 'Video complete — tap Continue below'
+               : playing ? 'Tap to pause'
                : progress > 0 ? 'Paused — tap to resume'
                : 'No video uploaded · tap to simulate (dev mode)'}
             </p>
-            {!done && (
-              <span className="absolute top-3 right-3 text-[8px] font-mono font-bold
-                px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400/60">
-                DEV
-              </span>
-            )}
+            {!done && <span className="absolute top-3 right-3 text-[8px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400/60">DEV</span>}
           </button>
         )}
-
-        {/* Progress bar */}
         <div className="absolute bottom-0 left-0 right-0">
           <div className="h-[3px] bg-black/50 relative">
             <div className="prog-fill h-full" style={{ width: `${pct}%` }} />
-            <div className="absolute top-0 h-full w-0.5 bg-white/50 -translate-x-px"
-              style={{ left: `${reqPct}%` }} />
+            <div className="absolute top-0 h-full w-0.5 bg-white/50 -translate-x-px" style={{ left: `${reqPct}%` }} />
           </div>
         </div>
       </div>
 
-      {/* Progress row */}
       <div className="flex items-center justify-between mb-4 animate-fade-up anim-d2">
         <div className="flex items-center gap-2.5">
-          <div className="prog-track w-28">
-            <div className="prog-fill" style={{ width: `${pct}%` }} />
-          </div>
+          <div className="prog-track w-28"><div className="prog-fill" style={{ width: `${pct}%` }} /></div>
           <span className="text-xs text-white/30 font-mono tabular-nums">{pct}%</span>
         </div>
-        <span className={`text-[11px] font-display font-semibold transition-colors duration-300
-          ${ready ? 'text-signal' : 'text-white/25'}`}>
-          {ready
-            ? <span className="flex items-center gap-1"><IconCheck className="w-3.5 h-3.5" /> Ready</span>
-            : `${reqPct - pct}% remaining`}
+        <span className={`text-[11px] font-display font-semibold transition-colors duration-300 ${ready ? 'text-signal' : 'text-white/25'}`}>
+          {ready ? <span className="flex items-center gap-1"><IconCheck className="w-3.5 h-3.5" /> Ready</span> : `${reqPct - pct}% remaining`}
         </span>
       </div>
 
-      {error && (
-        <div className="mb-4 px-4 py-3 rounded-xl bg-red-500/[0.07] border border-red-500/20 text-sm text-red-400 font-body">
-          {error}
-        </div>
-      )}
+      {error && <div className="mb-4 px-4 py-3 rounded-xl bg-red-500/[0.07] border border-red-500/20 text-sm text-red-400 font-body">{error}</div>}
 
       <div className="animate-fade-up anim-d3">
         <button onClick={handleContinue} disabled={!ready || submitting}
           className="btn-primary flex items-center justify-center gap-2.5">
-          {submitting ? (
-            <><span className="w-4 h-4 rounded-full border-2 border-void/40 border-t-void animate-spin" />
-            <span>Connecting…</span></>
-          ) : ready ? (
-            <><span>{config?.survey?.questions?.length ? 'Continue to Survey' : 'Get Internet Access'}</span>
-            <IconArrow className="w-4 h-4" /></>
-          ) : `Watch ${reqPct - pct}% more to continue`}
+          {submitting
+            ? <><span className="w-4 h-4 rounded-full border-2 border-void/40 border-t-void animate-spin" /><span>Connecting…</span></>
+            : ready
+            ? <><span>{config?.survey?.questions?.length ? 'Continue to Survey' : 'Get Internet Access'}</span><IconArrow className="w-4 h-4" /></>
+            : `Watch ${reqPct - pct}% more to continue`}
         </button>
       </div>
     </div>

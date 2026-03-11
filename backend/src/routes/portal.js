@@ -161,7 +161,17 @@ router.post('/:slug/access/grant', (req, res) => {
   }
 
   const mac = session.mac_address;
-  const dst = session.dst_url || process.env.SUCCESS_REDIRECT || 'http://www.google.com';
+  const SUCCESS = process.env.SUCCESS_REDIRECT || 'http://www.google.com';
+
+  // Strip captive portal detection probe URLs — these are not real pages and
+  // cause the OS to re-trigger the portal after grant. Replace with SUCCESS_REDIRECT.
+  // Common probe URLs: /gen_204, /generate_204, /connecttest.txt, /ncsi.txt, /hotspot-detect.html
+  const PROBE_PATTERNS = ['/gen_204', '/generate_204', '/connecttest', '/ncsi', '/hotspot-detect', '/canonical.html', '/success.txt'];
+  const rawDst = session.dst_url || '';
+  const isProbe = !rawDst || PROBE_PATTERNS.some(p => rawDst.includes(p));
+  const dst = isProbe ? SUCCESS : rawDst;
+
+  console.log(`🎯 Grant dst: raw="${rawDst}" isProbe=${isProbe} using="${dst}"`);
 
   // Build the URL the browser needs to visit to authenticate with MikroTik
   const { url: hotspotLoginUrl, mock } = buildLoginUrl(mac, dst);
