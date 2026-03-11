@@ -81,6 +81,28 @@ run_step() {
   exit 1
 }
 
+# ── Purge stale source files not in current build ────────────────────────
+# Previous versions may have left pages/components that reference old APIs.
+info "Removing stale source files…"
+KNOWN_PAGES=(
+  "PickerPage.tsx" "VideoPage.tsx" "SurveyPage.tsx"
+  "SuccessPage.tsx" "OfflinePage.tsx"
+)
+PAGES_DIR="$BASE/frontend/src/pages"
+if [[ -d "$PAGES_DIR" ]]; then
+  for f in "$PAGES_DIR"/*.tsx; do
+    [[ -f "$f" ]] || continue
+    fname="$(basename "$f")"
+    known=false
+    for k in "${KNOWN_PAGES[@]}"; do [[ "$k" == "$fname" ]] && known=true && break; done
+    if [[ "$known" == false ]]; then
+      warn "Removing stale page: $fname"
+      rm -f "$f"
+    fi
+  done
+fi
+ok "Source tree clean"
+
 # ── Frontend build ────────────────────────────────────────────────────────
 info "Installing frontend dependencies…"
 cd "$BASE/frontend"
@@ -92,6 +114,25 @@ run_step "npm run build (frontend)" "$BASE/logs/frontend-build.log"  npm run bui
 ok "Frontend built → $BASE/frontend/dist"
 
 # ── Admin build ───────────────────────────────────────────────────────────
+info "Removing stale admin source files…"
+KNOWN_ADMIN_PAGES=(
+  "CampaignManager.tsx" "Sessions.tsx" "Overview.tsx"
+  "Login.tsx" "NotFound.tsx"
+)
+ADMIN_PAGES_DIR="$BASE/admin/src/pages"
+if [[ -d "$ADMIN_PAGES_DIR" ]]; then
+  for f in "$ADMIN_PAGES_DIR"/*.tsx; do
+    [[ -f "$f" ]] || continue
+    fname="$(basename "$f")"
+    known=false
+    for k in "${KNOWN_ADMIN_PAGES[@]}"; do [[ "$k" == "$fname" ]] && known=true && break; done
+    if [[ "$known" == false ]]; then
+      warn "Removing stale admin page: $fname"
+      rm -f "$f"
+    fi
+  done
+fi
+
 info "Installing admin dependencies…"
 cd "$BASE/admin"
 run_step "npm install (admin)" "$BASE/logs/admin-install.log"  npm install
