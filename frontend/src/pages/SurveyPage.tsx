@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePortal } from '../context/SessionContext';
 import { portalApi, SurveyAnswer } from '../lib/api';
-import { IconArrow, IconCheck } from '../components/layout/Shell';
+import { IconArrow, IconCheck, IconUnlock } from '../components/layout/Shell';
 
 export function SurveyPage() {
   const { selectedSlug, status, config, loading, refresh } = usePortal();
@@ -12,7 +12,11 @@ export function SurveyPage() {
   const [answers,    setAnswers]    = useState<Record<string, string>>({});
   const [sliding,    setSliding]    = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [granted,    setGranted]    = useState(false);   // ← blocks useEffect guards after grant
   const [error,      setError]      = useState('');
+
+  // ref so useEffect closure always sees latest value
+  const grantedRef = useRef(false);
 
   useEffect(() => {
     if (!selectedSlug) { navigate('/', { replace: true }); return; }
@@ -20,34 +24,82 @@ export function SurveyPage() {
   }, [selectedSlug]);
 
   useEffect(() => {
+    // Once we've granted, stop ALL navigation guards — the browser is leaving.
+    if (grantedRef.current) return;
     if (loading) return;
     if (status?.surveyDone)    { navigate('/success', { replace: true }); return; }
     if (!status?.videoWatched) { navigate('/watch',   { replace: true }); return; }
-    // No questions — go straight to grant
-    if (config && !config.survey?.questions?.length) handleGrant();
+    if (config && !config.survey?.questions?.length) doGrant();
   }, [loading, status, config]);
 
-  // ── Grant access after survey submit ─────────────────────────────────────
-  const handleGrant = async () => {
+  // ── Grant internet access ─────────────────────────────────────────────────
+  const doGrant = async () => {
     if (!status || !selectedSlug) return;
+    grantedRef.current = true;   // stop useEffect guards immediately
+    setGranted(true);
     setSubmitting(true);
     try {
       const result = await portalApi.grantAccess(selectedSlug, status.sessionId);
       if (result.mock) {
-        // Dev / mock mode — stay in the SPA, show success page
         await refresh();
         navigate('/success', { replace: true });
       } else {
-        // Live mode — browser must visit MikroTik Hotspot login URL.
-        // MikroTik authenticates the MAC and redirects to original dst.
-        // User will leave captive.local entirely — that's correct.
-        window.location.href = result.hotspotLoginUrl;
+        // Live mode: send browser to MikroTik login URL.
+        // Use replace so pressing Back doesn't re-submit.
+        window.location.replace(result.hotspotLoginUrl);
       }
     } catch (e) {
+      grantedRef.current = false;
+      setGranted(false);
+      setSubmitting(false);
       setError(e instanceof Error ? e.message : 'Failed to grant access');
+    }
+  };
+
+  // ── Advance through questions / submit ────────────────────────────────────
+  const advance = async () => {
+    if (!answered || !status || !selectedSlug || submitting) return;
+
+    if (!isLast) {
+      setSliding(true);
+      setTimeout(() => { setCurrent(c => c + 1); setSliding(false); }, 200);
+      return;
+    }
+
+    // Last question — submit then grant
+    setSubmitting(true); setError('');
+    try {
+      const payload: SurveyAnswer[] = questions.map(qq => ({
+        question_id: qq.id, question: qq.text, answer: answers[qq.id] ?? '',
+      }));
+      await portalApi.submitSurvey(selectedSlug, status.sessionId, payload);
+      await doGrant();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Submission failed');
       setSubmitting(false);
     }
   };
+
+  // ── Full-screen connecting overlay ────────────────────────────────────────
+  // Show immediately after grant so user never sees a flash back to picker
+  if (granted) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 gap-4 animate-fade-in">
+        <div className="relative">
+          <div className="absolute inset-0 rounded-full bg-signal/20 animate-ping-slow" />
+          <div className="relative w-16 h-16 rounded-full bg-gradient-to-br from-signal to-aqua
+            flex items-center justify-center">
+            <IconUnlock className="w-7 h-7 text-void" />
+          </div>
+        </div>
+        <div className="text-center">
+          <p className="font-display font-bold text-white text-lg mb-1">Connecting…</p>
+          <p className="text-sm text-white/40 font-body">Authorizing your device</p>
+        </div>
+        <div className="w-6 h-6 rounded-full border-2 border-signal/40 border-t-signal animate-spin mt-2" />
+      </div>
+    );
+  }
 
   if (loading && !config) {
     return (
@@ -68,35 +120,10 @@ export function SurveyPage() {
     );
   }
 
-  const q      = questions[current];
-  const isLast = current === questions.length - 1;
+  const q        = questions[current];
+  const isLast   = current === questions.length - 1;
   const answered = answers[q.id] !== undefined;
-
-  const select = (opt: string) => setAnswers(a => ({ ...a, [q.id]: opt }));
-
-  const advance = async () => {
-    if (!answered || !status || !selectedSlug) return;
-
-    // Not last question — slide to next
-    if (!isLast) {
-      setSliding(true);
-      setTimeout(() => { setCurrent(c => c + 1); setSliding(false); }, 200);
-      return;
-    }
-
-    // Last question — submit survey then grant
-    setSubmitting(true); setError('');
-    try {
-      const payload: SurveyAnswer[] = questions.map(qq => ({
-        question_id: qq.id, question: qq.text, answer: answers[qq.id] ?? '',
-      }));
-      await portalApi.submitSurvey(selectedSlug, status.sessionId, payload);
-      await handleGrant();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Submission failed');
-      setSubmitting(false);
-    }
-  };
+  const select   = (opt: string) => setAnswers(a => ({ ...a, [q.id]: opt }));
 
   return (
     <div className="px-5 py-5">

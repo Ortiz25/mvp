@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePortal } from '../context/SessionContext';
 import { portalApi } from '../lib/api';
-import { IconPlay, IconArrow, IconCheck } from '../components/layout/Shell';
+import { IconPlay, IconArrow, IconCheck, IconUnlock } from '../components/layout/Shell';
 
 export function VideoPage() {
   const { selectedSlug, status, config, loading, refresh } = usePortal();
@@ -12,8 +12,10 @@ export function VideoPage() {
   const [playing,    setPlaying]    = useState(false);
   const [done,       setDone]       = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [granted,    setGranted]    = useState(false);   // blocks guards after grant
   const [error,      setError]      = useState('');
-  const timerRef = useRef<ReturnType<typeof setInterval>>();
+  const timerRef   = useRef<ReturnType<typeof setInterval>>();
+  const grantedRef = useRef(false);
 
   const video    = config?.video;
   const required = video?.requiredWatchPct ?? 0.8;
@@ -26,18 +28,20 @@ export function VideoPage() {
   }, [selectedSlug]);
 
   useEffect(() => {
+    if (grantedRef.current) return;
     if (loading || !status) return;
     if (status.videoWatched) {
-      // Video already marked — move on
       config?.survey?.questions?.length
         ? navigate('/survey', { replace: true })
-        : handleNoSurveyGrant();
+        : doNoSurveyGrant();
     }
   }, [loading, status, config]);
 
   // ── No-survey path: grant directly after video ──────────────────────────
-  const handleNoSurveyGrant = async () => {
-    if (!status || !selectedSlug) return;
+  const doNoSurveyGrant = async () => {
+    if (!status || !selectedSlug || grantedRef.current) return;
+    grantedRef.current = true;
+    setGranted(true);
     setSubmitting(true);
     try {
       const result = await portalApi.grantAccess(selectedSlug, status.sessionId);
@@ -45,9 +49,11 @@ export function VideoPage() {
         await refresh();
         navigate('/success', { replace: true });
       } else {
-        window.location.href = result.hotspotLoginUrl;
+        window.location.replace(result.hotspotLoginUrl);
       }
     } catch (e) {
+      grantedRef.current = false;
+      setGranted(false);
       setError(e instanceof Error ? e.message : 'Failed to grant access');
       setSubmitting(false);
     }
@@ -64,15 +70,19 @@ export function VideoPage() {
         navigate('/survey');
       } else {
         // No survey — grant immediately
+        grantedRef.current = true;
+        setGranted(true);
         const result = await portalApi.grantAccess(selectedSlug, status.sessionId);
         if (result.mock) {
           await refresh();
           navigate('/success');
         } else {
-          window.location.href = result.hotspotLoginUrl;
+          window.location.replace(result.hotspotLoginUrl);
         }
       }
     } catch (e) {
+      grantedRef.current = false;
+      setGranted(false);
       setError(e instanceof Error ? e.message : 'Failed to save progress');
       setSubmitting(false);
     }
@@ -88,7 +98,7 @@ export function VideoPage() {
       setPlaying(true);
       timerRef.current = setInterval(() => {
         setProgress(p => {
-          const next = p + 1 / (duration * 4); // ~4 ticks/sec → reaches 100% in duration seconds
+          const next = p + 1 / (duration * 4);
           if (next >= required) {
             clearInterval(timerRef.current);
             setPlaying(false);
@@ -101,9 +111,25 @@ export function VideoPage() {
     }
   };
 
-  const pct    = Math.round(progress * 100);
-  const reqPct = Math.round(required * 100);
-  const ready  = pct >= reqPct;
+  // ── Connecting overlay ────────────────────────────────────────────────────
+  if (granted) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 gap-4 animate-fade-in">
+        <div className="relative">
+          <div className="absolute inset-0 rounded-full bg-signal/20 animate-ping-slow" />
+          <div className="relative w-16 h-16 rounded-full bg-gradient-to-br from-signal to-aqua
+            flex items-center justify-center">
+            <IconUnlock className="w-7 h-7 text-void" />
+          </div>
+        </div>
+        <div className="text-center">
+          <p className="font-display font-bold text-white text-lg mb-1">Connecting…</p>
+          <p className="text-sm text-white/40 font-body">Authorizing your device</p>
+        </div>
+        <div className="w-6 h-6 rounded-full border-2 border-signal/40 border-t-signal animate-spin mt-2" />
+      </div>
+    );
+  }
 
   if (loading && !config) {
     return (
@@ -113,15 +139,9 @@ export function VideoPage() {
     );
   }
 
-  // No-survey granting spinner
-  if (submitting && !config?.survey?.questions?.length) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 gap-3">
-        <div className="w-8 h-8 rounded-full border-2 border-signal/30 border-t-signal animate-spin" />
-        <p className="text-sm text-white/40 font-body">Connecting to internet…</p>
-      </div>
-    );
-  }
+  const pct    = Math.round(progress * 100);
+  const reqPct = Math.round(required * 100);
+  const ready  = pct >= reqPct;
 
   return (
     <div className="px-5 py-5">
@@ -143,24 +163,21 @@ export function VideoPage() {
         border border-white/[0.08] bg-night relative" style={{ aspectRatio: '16/9' }}>
 
         {video?.url ? (
-          // Real video file
           <video
             src={video.url}
             className="w-full h-full object-cover"
             controls
             playsInline
             onTimeUpdate={e => {
-              const v   = e.currentTarget;
-              const pct = v.currentTime / (v.duration || duration);
-              setProgress(pct);
-              if (pct >= required) setDone(true);
+              const v = e.currentTarget;
+              const p = v.currentTime / (v.duration || duration);
+              setProgress(p);
+              if (p >= required) setDone(true);
             }}
           />
         ) : (
-          // Dev placeholder — tap to simulate playback
           <button onClick={toggleDemo}
             className="absolute inset-0 w-full flex flex-col items-center justify-center gap-3 group">
-            {/* Scan-line animation while playing */}
             {playing && (
               <div className="absolute inset-0 overflow-hidden pointer-events-none">
                 <div className="absolute w-full h-8 bg-gradient-to-b from-transparent
@@ -185,7 +202,6 @@ export function VideoPage() {
                : progress > 0 ? 'Paused — tap to resume'
                : 'No video uploaded · tap to simulate (dev mode)'}
             </p>
-            {/* Dev mode badge */}
             {!done && (
               <span className="absolute top-3 right-3 text-[8px] font-mono font-bold
                 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400/60">
@@ -195,11 +211,10 @@ export function VideoPage() {
           </button>
         )}
 
-        {/* Progress bar overlay */}
+        {/* Progress bar */}
         <div className="absolute bottom-0 left-0 right-0">
           <div className="h-[3px] bg-black/50 relative">
             <div className="prog-fill h-full" style={{ width: `${pct}%` }} />
-            {/* Required threshold marker */}
             <div className="absolute top-0 h-full w-0.5 bg-white/50 -translate-x-px"
               style={{ left: `${reqPct}%` }} />
           </div>
