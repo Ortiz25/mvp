@@ -59,11 +59,27 @@ router.get('/:slug/status', (req, res) => {
 
   const ip  = req.query.ip  || clientIp(req);
   const mac = req.query.mac || req.query.username || null;
-  // MikroTik uses 'link-orig' in login.html — accept both param names
-  const dst = req.query.dst || req.query['link-orig'] || null;
+  const rawDstParam = req.query.dst || req.query['link-orig'] || null;
 
-  // Debug: log all query params so we can trace MAC delivery
-  console.log(`[STATUS] slug=${req.params.slug} ip=${ip} mac=${mac} dst=${dst} raw_query=${JSON.stringify(req.query)}`);
+  // Sanitize dst:
+  // 1. Decode up to 2 times (MikroTik sometimes double-encodes)
+  // 2. Strip if it points back to captive.local or the router login page
+  //    (happens when link-login was mistakenly included in the form)
+  function sanitizeDst(raw) {
+    if (!raw) return null;
+    let d = raw;
+    try { d = decodeURIComponent(d); } catch {}
+    try { d = decodeURIComponent(d); } catch {}
+    // Strip probe URLs and self-referential URLs
+    const bad = ['captive.local', '192.168.88.1/login', '192.168.88.2', '/gen_204', '/generate_204', '/connecttest', '/ncsi', '/hotspot-detect', '/canonical.html'];
+    if (bad.some(b => d.includes(b))) return null;
+    // Must look like a real URL
+    if (!d.startsWith('http')) return null;
+    return d;
+  }
+  const dst = sanitizeDst(rawDstParam);
+
+  console.log(`[STATUS] slug=${req.params.slug} ip=${ip} mac=${mac} dst=${dst} raw_dst=${rawDstParam}`);
 
   const session = getOrCreateSession(ip, c.id, mac, dst);
 

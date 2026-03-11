@@ -1,36 +1,28 @@
 <html>
-<head><title>CityNet</title></head>
+<head>
+  <title>CityNet</title>
+  <!--
+    MikroTik Hotspot login page — flash/hotspot/login.html
+    
+    Uses META REFRESH + noscript form for Android captive portal WebView
+    compatibility. The WebView blocks JavaScript in many Android versions.
+    
+    Form passes only: mac, ip, dst (link-orig = the original destination URL).
+    Do NOT include link-login — it causes a recursive redirect loop.
+  -->
+  <meta http-equiv="refresh" content="0;url=http://captive.local/?mac=$(mac)&ip=$(ip)&dst=$(link-orig)" />
+</head>
 <body>
-<!--
-  MikroTik Hotspot login page — stored in flash/hotspot/login.html
-  
-  MikroTik variables available:
-    $(mac)          - client MAC address
-    $(ip)           - client IP address  
-    $(username)     - same as mac (when login-by=mac)
-    $(link-login)   - the full login URL on the router
-    $(link-orig)    - the original URL the client was trying to reach
-    $(error)        - any error message
-    $(chap-id)      - CHAP challenge id
-    $(chap-challenge) - CHAP challenge string
-
-  How this works:
-    1. Client connects to WiFi, tries to browse
-    2. MikroTik intercepts and serves THIS page from 192.168.88.1
-    3. This page immediately submits a form to captive.local (the Pi)
-    4. Pi portal shows video/survey flow
-    5. After completion, Pi redirects browser back to MikroTik login URL:
-         http://192.168.88.1/login?username=MAC&password=MAC&dst=original_url
-    6. MikroTik authenticates and redirects to dst
--->
-<form name="redirect" action="http://captive.local/" method="get">
-  <input type="hidden" name="mac"        value="$(mac)" />
-  <input type="hidden" name="ip"         value="$(ip)" />
-  <input type="hidden" name="username"   value="$(username)" />
-  <input type="hidden" name="dst"        value="$(link-orig)" />
-  <input type="hidden" name="link-login" value="$(link-login)" />
-  <input type="hidden" name="error"      value="$(error)" />
-</form>
-<script>document.redirect.submit();</script>
+  <!-- Fallback for browsers that don't support meta refresh -->
+  <form name="redirect" action="http://captive.local/" method="get">
+    <input type="hidden" name="mac" value="$(mac)" />
+    <input type="hidden" name="ip"  value="$(ip)" />
+    <input type="hidden" name="dst" value="$(link-orig)" />
+    <noscript>
+      <p>Tap below to continue:</p>
+      <button type="submit">Continue to Portal</button>
+    </noscript>
+  </form>
+  <script>document.redirect.submit();</script>
 </body>
 </html>
