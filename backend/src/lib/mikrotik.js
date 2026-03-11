@@ -14,7 +14,9 @@
  * No RouterOS API. No credentials. No library. Just a URL redirect.
  */
 
-const MOCK     = process.env.MIKROTIK_MOCK === 'true' || process.env.NODE_ENV !== 'production';
+// MOCK mode is controlled ONLY by MIKROTIK_MOCK env var.
+// Do NOT fall back to NODE_ENV — production Pi with MIKROTIK_MOCK=false must use the real router.
+const MOCK     = process.env.MIKROTIK_MOCK === 'true';
 const HS_HOST  = process.env.MIKROTIK_HOST    || '192.168.88.1';
 const HS_PORT  = process.env.MIKROTIK_HS_PORT || '80';
 const SUCCESS  = process.env.SUCCESS_REDIRECT || 'http://www.google.com';

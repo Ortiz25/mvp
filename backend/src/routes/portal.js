@@ -59,7 +59,8 @@ router.get('/:slug/status', (req, res) => {
 
   const ip  = req.query.ip  || clientIp(req);
   const mac = req.query.mac || req.query.username || null;
-  const dst = req.query.dst || null;
+  // MikroTik uses 'link-orig' in login.html — accept both param names
+  const dst = req.query.dst || req.query['link-orig'] || null;
 
   const session = getOrCreateSession(ip, c.id, mac, dst);
 
