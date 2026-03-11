@@ -61,18 +61,44 @@ info "Running DB migration…"
 node src/db/migrate.js
 ok "Database ready"
 
+# ── Helper: run a long command with a live spinner ────────────────────────
+# Usage: run_step "Label" logfile cmd [args…]
+run_step() {
+  local label="$1" logfile="$2"; shift 2
+  local spinchars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+  "$@" >"$logfile" 2>&1 &
+  local pid=$! i=0
+  while kill -0 "$pid" 2>/dev/null; do
+    printf "\r  ${BLUE}%s${NC}  %s  " "${spinchars:$((i % ${#spinchars})):1}" "$label"
+    i=$((i + 1)); sleep 0.15
+  done
+  printf "\r\033[K"   # clear spinner line
+  wait "$pid" && return 0
+  # on failure print last 20 lines of log then abort
+  echo -e "${RED}[✗] FAILED: $label${NC}"
+  echo -e "${YELLOW}── last lines of $logfile ──${NC}"
+  tail -20 "$logfile"
+  exit 1
+}
+
 # ── Frontend build ────────────────────────────────────────────────────────
-info "Building captive portal frontend…"
+info "Installing frontend dependencies…"
 cd "$BASE/frontend"
-npm install &>/dev/null
-npm run build &>/dev/null
+run_step "npm install (frontend)" "$BASE/logs/frontend-install.log"  npm install
+ok "Frontend deps installed"
+
+info "Building captive portal frontend…"
+run_step "npm run build (frontend)" "$BASE/logs/frontend-build.log"  npm run build
 ok "Frontend built → $BASE/frontend/dist"
 
 # ── Admin build ───────────────────────────────────────────────────────────
-info "Building admin dashboard…"
+info "Installing admin dependencies…"
 cd "$BASE/admin"
-npm install &>/dev/null
-npm run build &>/dev/null
+run_step "npm install (admin)" "$BASE/logs/admin-install.log"  npm install
+ok "Admin deps installed"
+
+info "Building admin dashboard…"
+run_step "npm run build (admin)" "$BASE/logs/admin-build.log"  npm run build
 ok "Admin built → $BASE/admin/dist"
 
 # ── nginx config ──────────────────────────────────────────────────────────
