@@ -39,7 +39,7 @@ export function SurveyPage() {
     setSubmitting(true);
     setError('');
     try {
-      await portalApi.grantAccess(selectedSlug, status.sessionId);
+      await portalApi.grantAccess(selectedSlug, status.sessionId, hotspot.ip);
       // Refresh server state then navigate — server now returns accessGranted=true
       await refresh();
       navigate('/connecting', { replace: true });

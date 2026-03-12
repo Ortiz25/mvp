@@ -1,32 +1,29 @@
 'use strict';
 /**
- * MikroTik Hotspot integration — RouterOS Binary API (port 8728)
+ * MikroTik Hotspot — RouterOS Binary API (port 8728)
  *
- * GRANT STRATEGY:
- *   Two-step process to fully authenticate a client:
+ * GRANT STRATEGY — two steps:
  *
- *   Step 1: /ip/hotspot/user/add  — creates the user record
- *     This tells RouterOS "this MAC is allowed". With login-by=mac,
- *     RouterOS will auto-authenticate this MAC when it sees traffic.
+ *  1. /ip/hotspot/user/add (with mac-address=)
+ *     Creates the user record. With login-by=mac, RouterOS uses this to
+ *     auto-authenticate the MAC on any subsequent packet.
  *
- *   Step 2: /ip/hotspot/active/login — creates the ACTIVE SESSION immediately
- *     This is the key step. Without it, the session only activates when
- *     RouterOS sees a packet from the MAC — but in practice that first
- *     packet (the browser navigating to /login) gets intercepted before
- *     the hotspot engine can match it as authenticated.
- *     Force-logging in via API bypasses this timing issue entirely.
- *     The client has internet instantly, no browser hit to /login needed.
+ *  2. /ip/hotspot/active/login
+ *     Force-creates an active session immediately, bypassing the need for
+ *     any browser-side action. The client gets internet without navigating
+ *     to 192.168.88.1/login at all.
  *
- * ENV VARS:
- *   MIKROTIK_HOST        192.168.88.1
- *   MIKROTIK_API_PORT    8728
- *   MIKROTIK_API_USER    pi-api
- *   MIKROTIK_API_PASS    (your password)
- *   MIKROTIK_HOTSPOT     hotspot1     (name of your /ip/hotspot entry)
- *   MIKROTIK_MOCK        false
+ *     Required: ip= (client's current IP address)
+ *     We get this from: session DB → request body → X-Real-IP header (in that order)
+ *
+ * WHY 192.168.88.1/login DOESN'T WORK FROM THE BROWSER:
+ *   Unauthenticated clients' HTTP requests are intercepted by the hotspot
+ *   engine BEFORE they reach the router's web server. The /login path is
+ *   only reachable AFTER the session is active — but we need to activate
+ *   it first. Catch-22 solved by using the API from the Pi instead.
  */
 
-const net  = require('net');
+const net = require('net');
 
 const MOCK     = process.env.MIKROTIK_MOCK     === 'true';
 const HS_HOST  = process.env.MIKROTIK_HOST     || '192.168.88.1';
@@ -35,7 +32,7 @@ const API_USER = process.env.MIKROTIK_API_USER || 'pi-api';
 const API_PASS = process.env.MIKROTIK_API_PASS || '';
 const HS_NAME  = process.env.MIKROTIK_HOTSPOT  || 'hotspot1';
 
-// ── RouterOS Binary API ─────────────────────────────────────────────────────
+// ── RouterOS Binary API protocol ────────────────────────────────────────────
 
 function encodeLength(len) {
   if (len < 0x80)       return Buffer.from([len]);
@@ -44,185 +41,143 @@ function encodeLength(len) {
   if (len < 0x10000000) return Buffer.from([(len >> 24) | 0xE0, (len >> 16) & 0xFF, (len >> 8) & 0xFF, len & 0xFF]);
   throw new Error(`Word too long: ${len}`);
 }
-
-function encodeWord(word) {
-  const b = Buffer.from(word, 'utf8');
-  return Buffer.concat([encodeLength(b.length), b]);
-}
-
-function encodeSentence(words) {
-  return Buffer.concat([...words.map(encodeWord), Buffer.from([0x00])]);
-}
+function encodeWord(w)  { const b = Buffer.from(w, 'utf8'); return Buffer.concat([encodeLength(b.length), b]); }
+function encodeSentence(words) { return Buffer.concat([...words.map(encodeWord), Buffer.from([0x00])]); }
 
 function decodeSentences(buf) {
-  const sentences = [];
-  let cur = [], i = 0;
+  const sentences = []; let cur = [], i = 0;
   while (i < buf.length) {
-    let len, skip;
     const b0 = buf[i];
-    if      ((b0 & 0xE0) === 0xE0) { len = ((b0 & 0x1F) << 24) | (buf[i+1] << 16) | (buf[i+2] << 8) | buf[i+3]; skip = 4; }
-    else if ((b0 & 0xC0) === 0xC0) { len = ((b0 & 0x3F) << 16) | (buf[i+1] << 8)  | buf[i+2];                    skip = 3; }
-    else if ((b0 & 0x80) === 0x80) { len = ((b0 & 0x7F) << 8)  | buf[i+1];                                        skip = 2; }
-    else                            { len = b0;                                                                      skip = 1; }
+    let len, skip;
+    if      ((b0 & 0xE0) === 0xE0) { len = ((b0&0x1F)<<24)|(buf[i+1]<<16)|(buf[i+2]<<8)|buf[i+3]; skip=4; }
+    else if ((b0 & 0xC0) === 0xC0) { len = ((b0&0x3F)<<16)|(buf[i+1]<<8)|buf[i+2];                 skip=3; }
+    else if ((b0 & 0x80) === 0x80) { len = ((b0&0x7F)<<8)|buf[i+1];                                 skip=2; }
+    else                            { len = b0;                                                        skip=1; }
     i += skip;
     if (len === 0) { if (cur.length) { sentences.push(cur); cur = []; } }
-    else           { cur.push(buf.slice(i, i + len).toString('utf8')); i += len; }
+    else           { cur.push(buf.slice(i, i+len).toString('utf8')); i += len; }
   }
   return sentences;
 }
-
 function parseSentence(words) {
-  const type  = words[0] || '';
-  const attrs = {};
-  for (const w of words.slice(1)) {
-    const eq = w.indexOf('=');
-    if (eq > 0) attrs[w.slice(1, eq)] = w.slice(eq + 1);
-  }
+  const type = words[0] || '', attrs = {};
+  for (const w of words.slice(1)) { const eq = w.indexOf('='); if (eq>0) attrs[w.slice(1,eq)] = w.slice(eq+1); }
   return { type, attrs };
 }
 
 function runCommands(commands) {
   return new Promise((resolve, reject) => {
-    const socket  = new net.Socket();
-    const results = [];
-    let   buf     = Buffer.alloc(0);
-    let   cmdIdx  = 0;
-    let   loggedIn = false;
+    const socket = new net.Socket();
+    const results = []; let buf = Buffer.alloc(0), cmdIdx = 0, loggedIn = false;
 
-    const timeout = setTimeout(() => {
-      socket.destroy();
-      reject(new Error('RouterOS API timeout (10s)'));
-    }, 10000);
+    const timer = setTimeout(() => { socket.destroy(); reject(new Error('API timeout (10s)')); }, 10000);
 
     socket.connect(API_PORT, HS_HOST, () => {
-      socket.write(encodeSentence([
-        '/login', `=name=${API_USER}`, `=password=${API_PASS}`,
-      ]));
+      socket.write(encodeSentence(['/login', `=name=${API_USER}`, `=password=${API_PASS}`]));
     });
 
     socket.on('data', chunk => {
       buf = Buffer.concat([buf, chunk]);
-      const sentences = decodeSentences(buf);
-      // Consume only complete sentences — keep remainder in buf
-      let consumed = 0;
-      for (const words of sentences) {
+      for (const words of decodeSentences(buf)) {
         const p = parseSentence(words);
         if (!loggedIn) {
-          if (p.type === '!done') {
-            loggedIn = true;
-            sendNext();
-          } else if (p.type === '!trap') {
-            clearTimeout(timeout);
-            socket.destroy();
-            reject(new Error(`Login failed: ${p.attrs.message || JSON.stringify(p.attrs)}`));
-          }
+          if (p.type === '!done') { loggedIn = true; socket.write(encodeSentence(commands[0])); }
+          else if (p.type === '!trap') { clearTimeout(timer); socket.destroy(); reject(new Error(`Login: ${p.attrs.message}`)); }
         } else {
           if (!results[cmdIdx]) results[cmdIdx] = [];
           results[cmdIdx].push(p);
           if (p.type === '!done' || p.type === '!trap') {
             cmdIdx++;
-            if (cmdIdx < commands.length) sendNext();
-            else { clearTimeout(timeout); socket.end(); resolve(results); }
+            if (cmdIdx < commands.length) socket.write(encodeSentence(commands[cmdIdx]));
+            else { clearTimeout(timer); socket.end(); resolve(results); }
           }
         }
       }
-      // Recalculate buf as whatever wasn't consumed — simplest: re-encode sentences
-      // Actually decodeSentences reads all available — so buf is fully consumed each call
       buf = Buffer.alloc(0);
     });
 
-    socket.on('error', err => { clearTimeout(timeout); reject(err); });
+    socket.on('error', err => { clearTimeout(timer); reject(err); });
     socket.on('close', () => {
-      clearTimeout(timeout);
+      clearTimeout(timer);
       if (cmdIdx >= commands.length) resolve(results);
-      else reject(new Error('Connection closed before all commands completed'));
+      else reject(new Error('Connection closed early'));
     });
-
-    function sendNext() {
-      socket.write(encodeSentence(commands[cmdIdx]));
-    }
   });
 }
 
-// ── Public API ──────────────────────────────────────────────────────────────
+// ── Helpers ─────────────────────────────────────────────────────────────────
 
-/**
- * Grant internet access to a MAC address.
- *
- * Two-step:
- *   1. Add/update /ip/hotspot/user entry (for login-by=mac auto-auth)
- *   2. Force-create active session via /ip/hotspot/active/login
- *      This immediately grants internet — no browser redirect needed.
- */
-async function grantAccess(mac, sessionHours) {
+function getReplies(results, idx) {
+  return (results[idx] || []).filter(r => r.type === '!re').map(r => r.attrs);
+}
+
+// ── Public API ───────────────────────────────────────────────────────────────
+
+async function grantAccess(mac, sessionHours, knownIp = null) {
   if (MOCK) {
-    console.log(`[MOCK] grantAccess: mac=${mac} hours=${sessionHours}`);
-    return { ok: true, mock: true };
+    console.log(`[MOCK] grantAccess mac=${mac} hours=${sessionHours}`);
+    return { ok: true, mock: true, activeSession: true };
   }
   if (!mac) return { ok: false, mock: false, error: 'No MAC address' };
 
   const normMac = mac.toUpperCase();
-  const h       = String(Math.floor(sessionHours)).padStart(2, '0');
-  const m       = String(Math.round((sessionHours % 1) * 60)).padStart(2, '0');
-  const uptime  = `${h}:${m}:00`;
+  const h = String(Math.floor(sessionHours)).padStart(2,'0');
+  const m = String(Math.round((sessionHours%1)*60)).padStart(2,'0');
+  const uptime = `${h}:${m}:00`;
 
   try {
-    // ── Step 1: User record (login-by=mac needs this) ──────────────────────
-    const findResults = await runCommands([
-      ['/ip/hotspot/user/print', `?mac-address=${normMac}`],
-    ]);
-    for (const reply of (findResults[0] || [])) {
-      if (reply.type === '!re' && reply.attrs['.id']) {
-        await runCommands([['/ip/hotspot/user/remove', `=.id=${reply.attrs['.id']}`]]);
-        console.log(`[MikroTik] Removed existing user ${normMac}`);
+    // ── Step 1: Create/replace hotspot user ──────────────────────────────
+    const findRes = await runCommands([['/ip/hotspot/user/print', `?mac-address=${normMac}`]]);
+    for (const u of getReplies(findRes, 0)) {
+      if (u['.id']) {
+        await runCommands([['/ip/hotspot/user/remove', `=.id=${u['.id']}`]]);
+        console.log(`[MikroTik] Removed old user entry for ${normMac}`);
       }
     }
     await runCommands([[
       '/ip/hotspot/user/add',
-      `=name=${normMac}`,
-      `=mac-address=${normMac}`,
-      `=profile=default`,
-      `=limit-uptime=${uptime}`,
+      `=name=${normMac}`, `=mac-address=${normMac}`,
+      `=profile=default`, `=limit-uptime=${uptime}`,
       `=comment=CityNet ${new Date().toISOString().slice(0,10)}`,
     ]]);
-    console.log(`[MikroTik] User added: ${normMac} limit-uptime=${uptime}`);
+    console.log(`[MikroTik] User added: ${normMac} uptime=${uptime}`);
 
-    // ── Step 2: Force-create active session ───────────────────────────────
-    // /ip/hotspot/active/login creates an authenticated session immediately.
-    // This is equivalent to the user clicking "login" on the hotspot page,
-    // but done server-side. No browser hit to 192.168.88.1/login needed.
-    //
-    // Required params:
-    //   ip       — client IP address (from DHCP lease)
-    //   mac      — client MAC
-    //   user     — must match the hotspot user name (we use MAC as name)
-    //   password — must match hotspot user password (empty for MAC auth users)
-    //   server   — the hotspot server name (/ip/hotspot name=)
-    //
-    // We need the client's current IP. Get it from the DHCP lease table.
-    const leaseResults = await runCommands([
-      ['/ip/dhcp-server/lease/print', `?mac-address=${normMac}`],
-    ]);
-    let clientIp = null;
-    for (const reply of (leaseResults[0] || [])) {
-      if (reply.type === '!re' && reply.attrs.address) {
-        clientIp = reply.attrs.address;
-        break;
+    // ── Step 2: Resolve client IP ─────────────────────────────────────────
+    let clientIp = knownIp || null;
+
+    if (!clientIp) {
+      // Try DHCP lease table by MAC
+      const leaseByMac = await runCommands([['/ip/dhcp-server/lease/print', `?mac-address=${normMac}`]]);
+      for (const l of getReplies(leaseByMac, 0)) {
+        if (l.address) { clientIp = l.address; break; }
       }
     }
 
     if (!clientIp) {
-      // No DHCP lease found — this can happen if the client used a static IP
-      // or the lease expired. Fall back to user-only auth and let RouterOS
-      // auto-activate when the client sends its next packet.
-      console.warn(`[MikroTik] No DHCP lease found for ${normMac} — user added, session will auto-activate`);
+      // Try all active leases and find one in our pool
+      console.log(`[MikroTik] No lease by MAC, scanning all leases...`);
+      const allLeases = await runCommands([['/ip/dhcp-server/lease/print']]);
+      for (const l of getReplies(allLeases, 0)) {
+        if (l.address && l.address.startsWith('192.168.88.') && l.address !== '192.168.88.1' && l.address !== '192.168.88.2') {
+          // Check if this lease's MAC matches (RouterOS may store MAC differently)
+          const lMac = (l['mac-address'] || '').toUpperCase();
+          if (lMac === normMac || lMac.replace(/:/g,'') === normMac.replace(/:/g,'')) {
+            clientIp = l.address;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!clientIp) {
+      console.warn(`[MikroTik] Cannot determine IP for ${normMac}. User added; session will auto-activate on first packet.`);
       return { ok: true, mock: false, activeSession: false };
     }
 
-    console.log(`[MikroTik] Client IP from DHCP: ${clientIp}`);
+    console.log(`[MikroTik] Client IP resolved: ${clientIp} (knownIp=${knownIp})`);
 
-    // Force login
-    const loginResult = await runCommands([[
+    // ── Step 3: Force-activate session via active/login ───────────────────
+    const loginRes = await runCommands([[
       '/ip/hotspot/active/login',
       `=ip=${clientIp}`,
       `=mac-address=${normMac}`,
@@ -231,15 +186,31 @@ async function grantAccess(mac, sessionHours) {
       `=server=${HS_NAME}`,
     ]]);
 
-    const loginReply = (loginResult[0] || []).find(r => r.type === '!done' || r.type === '!trap');
-    if (loginReply?.type === '!trap') {
-      // Active login failed — not fatal, user record exists so auto-auth will kick in
-      console.warn(`[MikroTik] active/login trap: ${loginReply.attrs.message} — falling back to auto-auth`);
-      return { ok: true, mock: false, activeSession: false, warning: loginReply.attrs.message };
+    const loginReplies = loginRes[0] || [];
+    const trap = loginReplies.find(r => r.type === '!trap');
+    if (trap) {
+      console.warn(`[MikroTik] active/login trap: "${trap.attrs.message}" — trying alternative activation`);
+
+      // ── Fallback: use /ip/hotspot/active/print to check if already active ──
+      // Sometimes the session was already activated between user/add and active/login
+      const activeCheck = await runCommands([['/ip/hotspot/active/print', `?mac-address=${normMac}`]]);
+      const activeSessions = getReplies(activeCheck, 0);
+      if (activeSessions.length > 0) {
+        console.log(`[MikroTik] Session already active for ${normMac} — trap was spurious`);
+        return { ok: true, mock: false, activeSession: true, clientIp };
+      }
+
+      // Not active. The auto-login on next packet will still work since user is in /ip/hotspot/user.
+      return { ok: true, mock: false, activeSession: false, clientIp, warning: trap.attrs.message };
     }
 
-    console.log(`✅ [MikroTik] Active session created for ${normMac} @ ${clientIp}`);
-    return { ok: true, mock: false, activeSession: true, clientIp };
+    // Verify session actually exists now
+    await new Promise(r => setTimeout(r, 500)); // small delay for RouterOS to commit
+    const verify = await runCommands([['/ip/hotspot/active/print', `?mac-address=${normMac}`]]);
+    const verified = getReplies(verify, 0).length > 0;
+    console.log(`✅ [MikroTik] Grant complete: ${normMac} @ ${clientIp} | active=${verified}`);
+
+    return { ok: true, mock: false, activeSession: verified, clientIp };
 
   } catch (err) {
     console.error(`❌ [MikroTik] grantAccess failed for ${normMac}:`, err.message);
@@ -247,26 +218,18 @@ async function grantAccess(mac, sessionHours) {
   }
 }
 
-/**
- * Revoke access — remove user record and kick active session.
- */
 async function revokeAccess(mac) {
   if (MOCK) return { ok: true, mock: true };
   const normMac = mac.toUpperCase();
   try {
-    // Remove user
     const find = await runCommands([['/ip/hotspot/user/print', `?mac-address=${normMac}`]]);
-    for (const r of (find[0] || [])) {
-      if (r.type === '!re' && r.attrs['.id'])
-        await runCommands([['/ip/hotspot/user/remove', `=.id=${r.attrs['.id']}`]]);
+    for (const u of getReplies(find, 0)) {
+      if (u['.id']) await runCommands([['/ip/hotspot/user/remove', `=.id=${u['.id']}`]]);
     }
-    // Kick active session
     const active = await runCommands([['/ip/hotspot/active/print', `?mac-address=${normMac}`]]);
-    for (const r of (active[0] || [])) {
-      if (r.type === '!re' && r.attrs['.id'])
-        await runCommands([['/ip/hotspot/active/remove', `=.id=${r.attrs['.id']}`]]);
+    for (const a of getReplies(active, 0)) {
+      if (a['.id']) await runCommands([['/ip/hotspot/active/remove', `=.id=${a['.id']}`]]);
     }
-    console.log(`[MikroTik] Revoked: ${normMac}`);
     return { ok: true, mock: false };
   } catch (err) {
     return { ok: false, mock: false, error: err.message };
@@ -274,19 +237,19 @@ async function revokeAccess(mac) {
 }
 
 async function listAuthorizedClients() {
-  if (MOCK) return [{ address: '192.168.88.10', 'mac-address': '02:00:C0:A8:58:0A', uptime: '01:23:00' }];
+  if (MOCK) return [];
   try {
-    const results = await runCommands([['/ip/hotspot/active/print']]);
-    return (results[0] || []).filter(r => r.type === '!re').map(r => r.attrs);
+    const r = await runCommands([['/ip/hotspot/active/print']]);
+    return getReplies(r, 0);
   } catch { return []; }
 }
 
 async function testConnection() {
   if (MOCK) return { ok: true, mode: 'mock', identity: 'MOCK' };
   try {
-    const results = await runCommands([['/system/identity/print']]);
-    const identity = (results[0] || []).find(r => r.type === '!re')?.attrs?.name || HS_HOST;
-    return { ok: true, mode: 'api', identity, host: HS_HOST, port: API_PORT, user: API_USER };
+    const r = await runCommands([['/system/identity/print']]);
+    const identity = getReplies(r, 0)[0]?.name || HS_HOST;
+    return { ok: true, mode: 'api', identity, host: HS_HOST, port: API_PORT };
   } catch (err) {
     return { ok: false, mode: 'api', host: HS_HOST, port: API_PORT, error: err.message };
   }
