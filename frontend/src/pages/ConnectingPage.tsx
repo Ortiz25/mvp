@@ -2,56 +2,60 @@ import { useEffect, useRef } from 'react';
 import { usePortal } from '../context/SessionContext';
 
 /**
- * ConnectingPage — the final step. Triggers MikroTik HTTP login.
+ * ConnectingPage — final step after access is granted.
  *
- * HOW MIKROTIK MAC-AUTH + HTTP LOGIN WORKS TOGETHER:
+ * WHY WE GO THROUGH /login INSTEAD OF DIRECTLY TO A SITE:
  *
- *   login-by=mac means RouterOS authenticates clients BY LOOKING UP their
- *   MAC in /ip/hotspot/user automatically. The Pi already added the MAC via
- *   the binary API. So the user IS already authorised at the network layer.
+ *   active/login via the binary API creates the session entry in RouterOS,
+ *   but the browser's traffic is only unblocked AFTER RouterOS confirms it
+ *   via the HTTP /login servlet. Navigating directly to google.com means
+ *   RouterOS intercepts the request, sees it as HTTP (or follows the HTTPS
+ *   redirect), and serves alogin.html instead of passing it through.
  *
- *   BUT the browser/OS doesn't know this yet. The captive portal WebView
- *   only dismisses when it makes a successful HTTP request to the internet
- *   (a real 204 from google, or a redirect to an external URL).
+ *   The correct path:
+ *     1. Browser → http://192.168.88.1/login?username=MAC&password=MAC&dst=ORIG
+ *     2. RouterOS servlet finds the active session for this MAC
+ *     3. RouterOS 302 → ORIG (must be a plain HTTP site, no HTTPS redirect)
+ *     4. Browser follows to ORIG → real internet response
+ *     5. OS captive portal detector sees real internet → dismisses WebView
  *
- *   The way to trigger this is to send the browser to:
- *     http://192.168.88.1/login?username=MAC&password=MAC&dst=ORIG
+ *   dst=http://neverssl.com is ideal — it's a permanent plain-HTTP site
+ *   with no redirect, designed exactly for this captive portal use case.
  *
- *   RouterOS receives this GET request from the client, finds the MAC in
- *   /ip/hotspot/user, marks the SESSION as active (separate from user auth),
- *   and redirects the browser to ORIG (or google.com if dst is absent).
- *
- *   Now the browser is talking to the real internet. The OS captive portal
- *   detector sees this and permanently dismisses the WebView.
- *
- * WHY NOT JUST WINDOW.LOCATION.REPLACE('http://google.com')?
- *   Because the client's traffic is still blocked at network layer until
- *   RouterOS marks the session active via the /login endpoint. The browser
- *   would just get a connection error or be redirected back to captive.local.
- *
- * THIS PAGE:
- *   Auto-redirects to the MikroTik /login URL after a short delay.
- *   If MAC is not available (shouldn't happen in production), shows a
- *   manual instruction instead.
+ * BOUNCE-BACK HANDLING:
+ *   If the WebView bounces back to captive.local after /connecting fires,
+ *   the status route finds this MAC with access_granted=1 and active=true,
+ *   so PickerPage's useEffect re-routes back to /connecting immediately.
+ *   The user sees ConnectingPage again and can tap the button manually.
  */
+
+const CONFIRM_URL = 'http://neverssl.com';   // plain HTTP, no HTTPS redirect, no captive interference
+const ROUTER_IP   = '192.168.88.1';
+
 export function ConnectingPage() {
   const { hotspot, status } = usePortal();
-  const redirected = useRef(false);
+  const fired = useRef(false);
 
-  // Build the MikroTik HTTP login URL
   const mac = hotspot.mac || status?.mac || null;
-  const dst = hotspot.dst || status?.dst || 'http://www.google.com';
 
+  // dst: use the original URL the user was trying to reach, or neverssl as fallback
+  const dst = hotspot.dst || status?.dst || CONFIRM_URL;
+
+  // The MikroTik HTTP login servlet URL — this is the authoritative confirmation path
   const loginUrl = mac
-    ? `http://192.168.88.1/login?username=${encodeURIComponent(mac)}&password=${encodeURIComponent(mac)}&dst=${encodeURIComponent(dst)}`
+    ? `http://${ROUTER_IP}/login?username=${encodeURIComponent(mac)}&password=${encodeURIComponent(mac)}&dst=${encodeURIComponent(dst)}`
     : null;
 
-  useEffect(() => {
-    if (!loginUrl || redirected.current) return;
-    redirected.current = true;
+  function goNow() {
+    window.location.href = loginUrl || `http://${ROUTER_IP}/login`;
+  }
 
-    // Short delay — gives the user a moment to see the "connected" screen
-    // and ensures RouterOS has fully committed the hotspot user entry
+  useEffect(() => {
+    if (!loginUrl || fired.current) return;
+    fired.current = true;
+
+    // 1.5s delay: enough for RouterOS to propagate the active session to its
+    // firewall rules after the binary API active/login call on the backend.
     const t = setTimeout(() => {
       window.location.replace(loginUrl);
     }, 1500);
@@ -62,14 +66,15 @@ export function ConnectingPage() {
   return (
     <div className="flex flex-col items-center justify-center py-16 gap-6 px-6 animate-fade-in">
 
-      {/* Animated unlock icon */}
+      {/* Animated success icon */}
       <div className="relative">
         <div className="absolute inset-0 rounded-full bg-signal/20 animate-ping-slow" />
         <div className="relative w-16 h-16 rounded-full bg-gradient-to-br from-signal to-aqua
           flex items-center justify-center">
-          <svg className="w-7 h-7 text-void" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+          <svg className="w-7 h-7 text-void" fill="none" viewBox="0 0 24 24"
+            stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round"
-              d="M8 11V7a4 4 0 118 0v4M5 11h14a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2z" />
+              d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
         </div>
       </div>
@@ -83,14 +88,15 @@ export function ConnectingPage() {
 
       <div className="w-6 h-6 rounded-full border-2 border-signal/40 border-t-signal animate-spin" />
 
-      {/* Fallback if auto-redirect doesn't fire */}
+      {/* Manual trigger — if auto-redirect stalls */}
       {loginUrl && (
-        <a href={loginUrl}
-          className="w-full py-4 rounded-xl font-display font-bold text-base text-center
+        <button
+          onClick={goNow}
+          className="w-full py-4 rounded-xl font-display font-bold text-base
             bg-signal border border-signal/40 text-void
-            hover:bg-signal/90 active:scale-95 transition-all duration-150 block">
+            hover:bg-signal/90 active:scale-95 transition-all duration-150">
           Start Browsing →
-        </a>
+        </button>
       )}
 
       {!loginUrl && (
@@ -99,6 +105,11 @@ export function ConnectingPage() {
             Close this window and open your browser — you're online.
           </p>
         </div>
+      )}
+
+      {/* Tiny debug info */}
+      {mac && (
+        <p className="text-[10px] text-white/15 font-mono text-center break-all px-4">{mac}</p>
       )}
     </div>
   );

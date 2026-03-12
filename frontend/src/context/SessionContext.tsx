@@ -7,15 +7,11 @@ import { CampaignSummary, CampaignConfig, PortalStatus, portalApi } from '../lib
  * MikroTik redirects to: http://captive.local/?mac=XX&ip=YY&dst=ZZ
  * These params are in window.location.search on the very first render.
  *
- * STORAGE: We write to BOTH sessionStorage AND a module-level variable.
- * - Module variable: survives React re-renders and React Router navigations
- * - sessionStorage: survives page reloads within the same tab
+ * STORAGE: module-level cache (survives React Router navigations) +
+ *          sessionStorage (survives page reloads within the same tab).
  *
- * We do NOT use localStorage — if the user returns after their session
- * expires we want a fresh start, not stale params from a previous session.
- *
- * CRITICAL: We read window.location.search directly, NOT from React Router,
- * because BrowserRouter may strip query params during its initialisation.
+ * SENTINEL FILTERING: We block our own redirect-confirm URLs so they
+ * are never stored as the user's real dst and never re-used as targets.
  */
 
 const SS_KEY = 'cp_hotspot_v2';
@@ -29,32 +25,34 @@ export interface HotspotParams {
 // Module-level cache — survives React Router navigations within the tab
 let _cached: HotspotParams | null = null;
 
+const DST_SENTINELS = [
+  'captive.local', '192.168.88.1', '192.168.88.2',
+  '/gen_204', '/generate_204', '/connecttest', '/ncsi',
+  '/hotspot-detect', '/canonical.html', 'hotspot/login', '/login',
+  'example.com',    // our old redirect-confirm sentinel
+  'neverssl.com',   // our current redirect-confirm sentinel
+  'google.com',     // google immediately 301 → HTTPS, causes loop
+];
+
 function sanitizeDst(raw: string | null): string | null {
   if (!raw) return null;
   let d = raw;
   try { d = decodeURIComponent(d); } catch {}
   try { d = decodeURIComponent(d); } catch {}
-  const bad = [
-    'captive.local', '192.168.88.1', '192.168.88.2',
-    '/gen_204', '/generate_204', '/connecttest', '/ncsi',
-    '/hotspot-detect', '/canonical.html', 'hotspot/login', '/login',
-  ];
-  if (bad.some(b => d.includes(b))) return null;
   if (!d.startsWith('http')) return null;
+  if (DST_SENTINELS.some(b => d.includes(b))) return null;
   return d;
 }
 
 function readHotspotParams(): HotspotParams {
   if (_cached) return _cached;
 
-  // Read from the raw URL — before React Router touches anything
   const p   = new URLSearchParams(window.location.search);
   const mac = p.get('mac') || p.get('username') || null;
   const ip  = p.get('ip') || null;
   const dst = sanitizeDst(p.get('dst') || p.get('link-orig') || null);
 
   if (mac) {
-    // Fresh MikroTik redirect — save it
     const params: HotspotParams = { mac, ip, dst };
     _cached = params;
     try { sessionStorage.setItem(SS_KEY, JSON.stringify(params)); } catch {}
@@ -62,7 +60,6 @@ function readHotspotParams(): HotspotParams {
     return params;
   }
 
-  // Try sessionStorage (page reload within same tab)
   try {
     const stored = sessionStorage.getItem(SS_KEY);
     if (stored) {

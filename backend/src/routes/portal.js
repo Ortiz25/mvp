@@ -1,31 +1,53 @@
 'use strict';
 /**
- * Portal routes — MikroTik REST API edition
+ * Portal routes
  *
- * Grant flow (live mode):
- *   1. Frontend calls POST /api/:slug/access/grant
- *   2. Backend calls MikroTik REST API → adds MAC to /ip/hotspot/user
- *   3. RouterOS auto-authenticates the MAC on its next packet (~instant)
- *   4. Backend returns { granted: true, mock: false }
- *   5. Frontend navigates to /connecting ("Access Granted — tap Open Browser")
- *   6. User taps → window.location.replace('http://www.google.com') → works ✓
- *
- * No browser redirect to 192.168.88.1/login needed.
- * No login-by=http needed on the MikroTik profile.
+ * Grant flow:
+ *   1. Frontend POST /api/:slug/access/grant
+ *   2. Backend grantAccess(mac, hours, clientIp):
+ *        a. /ip/hotspot/user/add  name=MAC password=MAC
+ *        b. /ip/hotspot/active/login  ip= mac= user= password=  (no server=)
+ *        c. verify entry appears in /ip/hotspot/active
+ *   3. Frontend navigates to /connecting
+ *   4. ConnectingPage redirects to http://192.168.88.1/login?username=MAC&password=MAC&dst=ORIG
+ *   5. RouterOS confirms session → 302 to ORIG → real internet → WebView dismissed
  */
 const express = require('express');
 const router  = express.Router();
 
-const { grantAccess }    = require('../lib/mikrotik');
+const { grantAccess } = require('../lib/mikrotik');
 const { getAllCampaigns, getCampaignBySlug, getCampaignConfig } = require('../lib/campaigns');
 const {
   getOrCreateSession, getSession, isSessionActive,
   markVideoWatched, markSurveyDone, markAccessGranted,
 } = require('../lib/sessions');
 
-const clientIp = req =>
-  ((req.headers['x-real-ip'] || req.headers['x-forwarded-for'] || req.ip || '0.0.0.0')
-    .split(',')[0].trim());
+// Sentinel values we use ourselves — must never be stored as a real dst
+const DST_SENTINELS = [
+  'captive.local', '192.168.88.1', '192.168.88.2',
+  '/gen_204', '/generate_204', '/connecttest', '/ncsi',
+  '/hotspot-detect', '/canonical.html', 'hotspot/login', '/login',
+  'example.com',   // our own redirect-confirm sentinel
+  'google.com',    // avoid storing google as dst (causes HTTPS loop)
+];
+
+function sanitizeDst(raw) {
+  if (!raw) return null;
+  let d = raw;
+  try { d = decodeURIComponent(d); } catch {}
+  try { d = decodeURIComponent(d); } catch {}
+  if (!d.startsWith('http')) return null;
+  if (DST_SENTINELS.some(b => d.includes(b))) return null;
+  return d;
+}
+
+function getClientIp(req) {
+  return (
+    (req.headers['x-real-ip']       || '').split(',')[0].trim() ||
+    (req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
+    req.ip || null
+  );
+}
 
 // ── GET /api/campaigns ────────────────────────────────────────────────────
 router.get('/campaigns', (_req, res) => {
@@ -48,27 +70,11 @@ router.get('/:slug/status', (req, res) => {
   const c = getCampaignBySlug(req.params.slug);
   if (!c) return res.status(404).json({ error: 'Campaign not found' });
 
-  const ip  = req.query.ip  || clientIp(req);
+  const ip  = req.query.ip  || getClientIp(req);
   const mac = req.query.mac || req.query.username || null;
-  const rawDstParam = req.query.dst || req.query['link-orig'] || null;
+  const dst = sanitizeDst(req.query.dst || req.query['link-orig'] || null);
 
-  function sanitizeDst(raw) {
-    if (!raw) return null;
-    let d = raw;
-    try { d = decodeURIComponent(d); } catch {}
-    try { d = decodeURIComponent(d); } catch {}
-    const bad = [
-      'captive.local', '192.168.88.1', '192.168.88.2',
-      '/gen_204', '/generate_204', '/connecttest', '/ncsi',
-      '/hotspot-detect', '/canonical.html', 'hotspot/login',
-    ];
-    if (bad.some(b => d.includes(b))) return null;
-    if (!d.startsWith('http')) return null;
-    return d;
-  }
-  const dst = sanitizeDst(rawDstParam);
-
-  console.log(`[STATUS] slug=${req.params.slug} ip=${ip} mac=${mac} dst=${dst} raw_dst=${rawDstParam}`);
+  console.log(`[STATUS] slug=${req.params.slug} ip=${ip} mac=${mac} dst=${dst} raw_dst=${req.query.dst||null}`);
 
   const session = getOrCreateSession(ip, c.id, mac, dst);
 
@@ -100,10 +106,10 @@ router.get('/:slug/config', (req, res) => {
       sessionHours: c.session_hours,
     },
     video: v ? {
-      id: v.id, title: v.title, description: v.description,
-      url:          `/media/${c.id}/${v.filename}`,
+      id: v.id, title: v.title,
+      url: `/media/${c.id}/${v.filename}`,
       thumbnailUrl: v.thumbnail_filename ? `/media/${c.id}/${v.thumbnail_filename}` : null,
-      durationSeconds:  v.duration_seconds,
+      durationSeconds: v.duration_seconds,
       requiredWatchPct: v.required_watch_pct,
     } : null,
     survey: s ? {
@@ -119,7 +125,7 @@ router.post('/:slug/video/complete', (req, res) => {
   if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
 
   const session = getSession(sessionId);
-  if (!session)  return res.status(404).json({ error: 'Session not found' });
+  if (!session) return res.status(404).json({ error: 'Session not found' });
 
   const cfg      = getCampaignConfig(req.params.slug);
   const required = cfg?.video?.required_watch_pct || 0.8;
@@ -136,7 +142,7 @@ router.post('/:slug/survey/submit', (req, res) => {
   if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
 
   const session = getSession(sessionId);
-  if (!session)           return res.status(404).json({ error: 'Session not found' });
+  if (!session)               return res.status(404).json({ error: 'Session not found' });
   if (!session.video_watched) return res.status(403).json({ error: 'Must watch video first' });
   if (!answers?.length)       return res.status(400).json({ error: 'Answers required' });
 
@@ -145,11 +151,8 @@ router.post('/:slug/survey/submit', (req, res) => {
 });
 
 // ── POST /api/:slug/access/grant ──────────────────────────────────────────
-// Calls MikroTik REST API server-side to add the MAC to /ip/hotspot/user.
-// RouterOS auto-authenticates the client on its next packet — no browser
-// redirect to 192.168.88.1 needed.
 router.post('/:slug/access/grant', async (req, res) => {
-  const { sessionId } = req.body;
+  const { sessionId, ip: bodyIp } = req.body;
   if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
 
   const session = getSession(sessionId);
@@ -160,38 +163,37 @@ router.post('/:slug/access/grant', async (req, res) => {
   const c = getCampaignBySlug(req.params.slug);
   if (!c) return res.status(404).json({ error: 'Campaign not found' });
 
-  const mac = session.mac_address;
+  const mac   = session.mac_address;
   const hours = c.session_hours || 1;
 
-  console.log(`🎯 Grant: mac=${mac || 'none'} campaign=${c.slug} hours=${hours}`);
+  // IP priority: X-Real-IP (nginx, always current TCP source) > session DB > body
+  const clientIp =
+    (req.headers['x-real-ip']       || '').split(',')[0].trim() ||
+    (req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
+    session.ip_address ||
+    bodyIp ||
+    null;
 
-  // Call MikroTik REST API to add the MAC as a hotspot user
-  const result = await grantAccess(mac, hours);
+  console.log(`🎯 Grant: mac=${mac||'none'} ip=${clientIp} (x-real-ip=${req.headers['x-real-ip']||'none'}) campaign=${c.slug} hours=${hours}`);
+
+  const result = await grantAccess(mac, hours, clientIp);  // ← IP passed
 
   if (!result.ok && !result.mock) {
-    // Log the error but don't block the user — the API call failed but we
-    // still mark them as granted in our DB. The admin can manually authorize
-    // if needed. In practice this only happens if the Pi can't reach the router.
-    console.error(`⚠️  MikroTik API grant failed: ${result.error} — marking DB anyway`);
+    console.error(`⚠️  MikroTik grant failed: ${result.error}`);
   }
 
-  // Always update DB — idempotent
   markAccessGranted(sessionId, hours);
-
   const expiresAt = new Date(Date.now() + hours * 3600000).toISOString();
 
-  console.log(`🌐 Access granted: mac=${mac || 'none'} campaign=${c.slug} hours=${hours} mock=${result.mock} apiOk=${result.ok}`);
+  console.log(`🌐 Access granted: mac=${mac} ip=${result.clientIp||clientIp} campaign=${c.slug} hours=${hours} mock=${result.mock} apiOk=${result.ok} activeSession=${result.activeSession}`);
 
-  // Return to frontend — no hotspotLoginUrl needed anymore.
-  // Frontend navigates to /connecting and shows "Open Browser" button.
   res.json({
-    success:  true,
-    granted:  result.ok,
-    mock:     result.mock,
+    success:       true,
+    granted:       result.ok,
+    mock:          result.mock,
+    activeSession: result.activeSession || false,
+    clientIp:      result.clientIp || clientIp,
     expiresAt,
-    // Keep hotspotLoginUrl as fallback in case someone has the old frontend
-    // — it won't work for MAC auth but won't break anything either.
-    hotspotLoginUrl: null,
   });
 });
 

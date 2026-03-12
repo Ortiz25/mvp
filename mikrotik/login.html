@@ -2,46 +2,75 @@
 <head>
   <title>CityNet</title>
   <!--
-    MikroTik Hotspot login page — upload to: flash/hotspot/login.html
+    MikroTik Hotspot login.html — upload to: flash/hotspot/login.html
 
-    RouterOS replaces $(mac), $(ip), $(link-orig) before serving this file.
+    RouterOS template variables replaced before serving:
+      $(mac)       — client MAC address  e.g. 8E:5A:E7:2C:58:52
+      $(ip)        — client IP address   e.g. 192.168.88.3
+      $(link-orig) — original URL client was trying to reach (URL-encoded)
 
-    WHAT THIS FILE DOES:
-      MikroTik intercepts the client's first HTTP request and serves this
-      file. We immediately redirect to the React portal on the Pi, passing
-      mac, ip, and the original destination URL as query params.
+    HOW IT WORKS:
+      MikroTik intercepts the phone's first HTTP request and serves this page.
+      We immediately redirect to the React portal on the Pi, passing mac, ip,
+      and the original destination as query params.
 
-    WHAT HAPPENS AFTER THE PORTAL:
-      The React portal does NOT try to redirect to google.com.
-      Instead, after grant, it redirects to:
-        http://192.168.88.1/login?username=MAC&password=MAC&dst=ORIG_URL
+    AFTER THE PORTAL GRANTS ACCESS:
+      ConnectingPage navigates the browser to:
+        http://192.168.88.1/login?username=MAC&password=MAC&dst=http://www.google.com
 
-      MikroTik receives that GET request FROM THE BROWSER (important),
-      looks up the MAC in /ip/hotspot/user (already added by the Pi API),
-      authenticates the session at network layer, then redirects the browser
-      to ORIG_URL (or google.com if dst is empty).
+      MikroTik's hotspot servlet receives this request FROM the phone's browser,
+      looks up the MAC in /ip/hotspot/user, authenticates, and 302-redirects
+      to dst. The OS captive portal detector sees real internet and dismisses
+      the WebView permanently.
 
-      The OS captive portal detector sees a successful redirect to the
-      internet and permanently dismisses the captive portal WebView.
+    NOTE ON $(link-orig):
+      Android captive portal detection requests /generate_204 — RouterOS captures
+      this as $(link-orig). Our portal sanitizes it and falls back to google.com,
+      so dst being a probe URL is handled correctly.
+  -->
+
+  <!--
+    PRIMARY: JavaScript redirect — fastest, no flicker, constructs clean URL.
+    If JS is disabled, falls through to the meta refresh below.
+  -->
+  <script>
+    (function () {
+      var mac = '$(mac)';
+      var ip  = '$(ip)';
+      var dst = '$(link-orig)';
+      var url = 'http://captive.local/'
+        + '?mac='  + encodeURIComponent(mac)
+        + '&ip='   + encodeURIComponent(ip)
+        + '&dst='  + encodeURIComponent(dst);
+      window.location.replace(url);
+    })();
+  </script>
+
+  <!--
+    FALLBACK: meta refresh — fires if JS is disabled or blocked.
+    Uses $(link-orig) raw (RouterOS already URL-encodes it).
   -->
   <meta http-equiv="refresh"
     content="0;url=http://captive.local/?mac=$(mac)&ip=$(ip)&dst=$(link-orig)" />
 </head>
-<body>
-  <form name="redirect" action="http://captive.local/" method="get">
+<body style="margin:0;background:#0a0a0f;display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:sans-serif">
+  <!--
+    LAST RESORT: shown only if both JS and meta-refresh are blocked
+    (e.g. some corporate proxy environments). User taps the button manually.
+    The form GET puts params in the URL, same as the JS redirect above.
+  -->
+  <form method="get" action="http://captive.local/">
     <input type="hidden" name="mac" value="$(mac)" />
     <input type="hidden" name="ip"  value="$(ip)"  />
     <input type="hidden" name="dst" value="$(link-orig)" />
     <noscript>
-      <p style="font-family:sans-serif;text-align:center;margin-top:40px">
-        <button type="submit"
-          style="padding:14px 32px;font-size:16px;border-radius:10px;
-                 background:#22d3ee;border:none;color:#000;cursor:pointer;font-weight:bold">
-          Continue to CityNet Portal →
-        </button>
-      </p>
+      <button type="submit"
+        style="padding:16px 36px;font-size:16px;font-weight:bold;
+               border-radius:12px;border:none;cursor:pointer;
+               background:#22d3ee;color:#000">
+        Continue to CityNet →
+      </button>
     </noscript>
   </form>
-  <script>document.redirect.submit();</script>
 </body>
 </html>
