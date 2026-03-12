@@ -2,42 +2,56 @@
 #
 # Install:
 #   sudo cp captive-portal.nginx /etc/nginx/sites-available/captive-portal
-#   sudo ln -s /etc/nginx/sites-available/captive-portal /etc/nginx/sites-enabled/captive-portal
+#   sudo ln -sf /etc/nginx/sites-available/captive-portal /etc/nginx/sites-enabled/captive-portal
 #   sudo rm -f /etc/nginx/sites-enabled/default
 #   sudo nginx -t && sudo systemctl reload nginx
-#
-# Architecture:
-#   Port 80   — captive portal frontend + API (all clients, walled-garden accessible)
-#   Port 8090 — admin dashboard (management subnet only)
-#   kolibri.local — walled-garden proxy to Kolibri :8080
-#
-# MikroTik Hotspot redirects unauthenticated clients to:
-#   http://captive.local/?mac=XX&ip=YY&username=XX&dst=http://original
-# After portal flow, frontend redirects to:
-#   http://192.168.88.1/login?username=MAC&password=MAC&dst=original
-# MikroTik authenticates and redirects to dst — user leaves captive.local.
-#
-# Dev mode (MIKROTIK_MOCK=true):
-#   No MikroTik redirect happens. Portal flow ends at /success page.
-#   Test by opening http://captive.local directly.
 
 # ── Captive Portal — port 80 ──────────────────────────────────────────────
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
-    server_name _;
+    server_name captive.local 192.168.88.2 _;
 
     client_max_body_size 512M;
     proxy_read_timeout   120s;
 
-    # ── Captive portal OS detection ──────────────────────────────────────
-    # Belt-and-suspenders: MikroTik Hotspot handles most of these itself,
-    # but we respond here too in case the Pi receives the request directly.
+    # ── CRITICAL: Block the /login path ──────────────────────────────────
+    # MikroTik Hotspot sets login-page=http://captive.local/ which means
+    # it redirects clients to captive.local. HOWEVER, if login-page is not
+    # set or is wrong, RouterOS may redirect to captive.local/login instead.
+    # nginx serving the React SPA at /login would serve index.html which then
+    # React Router can't match /login (no such route) and falls back to PickerPage.
+    # Worse: the hotspot polls captive.local/login as a keepalive — if nginx
+    # serves HTML instead of a 200/204 the hotspot goes into a redirect loop.
+    #
+    # FIX: Explicitly handle /login here and return the MikroTik redirect.
+    # This captures: captive.local/login?username=X&password=X&dst=Y
+    # and redirects back to the router's actual login handler.
+    location = /login {
+        # Return 200 so MikroTik's hotspot keepalive is satisfied.
+        # The actual grant is done by the frontend redirecting to 192.168.88.1/login
+        # NOT by captive.local/login.
+        return 200 "ok";
+        add_header Content-Type text/plain;
+    }
 
-    # Android / Chrome
+    # ── Captive portal OS detection endpoints ────────────────────────────
+    # These must return specific responses so OS captive portal detectors
+    # know the portal is present and open the login browser automatically.
+    # MikroTik Hotspot intercepts most of these itself at the router, but
+    # we handle them here too for devices that bypass the hotspot redirect.
+
+    # Android / Chrome — must return 204 (no content) when authorized,
+    # redirect to portal when not. Since nginx can't check auth state,
+    # return 204 always (MikroTik has already redirected unauthorized clients).
     location = /generate_204         { return 204; }
     location = /gen_204              { return 204; }
-    location = /connecttest.txt      { return 302 http://captive.local/; }
+
+    # Android connection test
+    location = /connecttest.txt      {
+        add_header Content-Type text/plain;
+        return 200 "Microsoft NCSI";
+    }
 
     # Windows NCSI
     location = /ncsi.txt             {
@@ -47,9 +61,12 @@ server {
 
     # Firefox
     location = /canonical.html       { return 302 http://captive.local/; }
-    location = /success.txt          { return 200 "success"; add_header Content-Type text/plain; }
+    location = /success.txt          {
+        add_header Content-Type text/plain;
+        return 200 "success";
+    }
 
-    # Apple
+    # Apple — must return exact HTML with <TITLE>Success</TITLE> when online
     location = /hotspot-detect.html  { return 302 http://captive.local/; }
     location = /library/test/success.html {
         add_header Content-Type text/html;
@@ -79,7 +96,7 @@ server {
         add_header        Cache-Control "public, max-age=86400";
     }
 
-    # ── Fingerprinted static assets (cache forever) ───────────────────────
+    # ── Fingerprinted static assets (JS/CSS bundles from Vite build) ─────
     location ~* \.(js|css|woff2?|png|jpg|svg|ico)$ {
         root       /home/admin/apps/mvp/frontend/dist;
         try_files  $uri =404;
@@ -88,24 +105,27 @@ server {
     }
 
     # ── React SPA (portal frontend) ───────────────────────────────────────
+    # try_files serves the built asset if it exists, otherwise serves
+    # index.html so React Router handles the route client-side.
+    # IMPORTANT: /login is handled above and must NOT fall through to here.
     location / {
         root       /home/admin/apps/mvp/frontend/dist;
         try_files  $uri $uri/ /index.html;
         add_header Cache-Control "no-cache, no-store, must-revalidate";
+        add_header Pragma        "no-cache";
+        add_header Expires       "0";
     }
 }
 
 # ── Admin Dashboard — port 8090 ───────────────────────────────────────────
-# Restricted to management subnets.
-# Add your laptop's subnet if accessing from a different network.
 server {
     listen 8090;
     server_name _;
 
     allow 127.0.0.1;
-    allow 192.168.88.0/24;   # captive portal subnet (Pi + MikroTik)
-    allow 192.168.1.0/24;    # typical home/office LAN
-    allow 192.168.8.0/24;    # additional management subnet
+    allow 192.168.88.0/24;
+    allow 192.168.1.0/24;
+    allow 192.168.8.0/24;
     deny  all;
 
     client_max_body_size 512M;
@@ -135,7 +155,6 @@ server {
 }
 
 # ── Kolibri — walled garden pre-auth ─────────────────────────────────────
-# Accessible before authentication (in MikroTik walled-garden ip list).
 server {
     listen 80;
     server_name kolibri.local;
