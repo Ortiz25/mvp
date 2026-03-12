@@ -4,31 +4,27 @@ const { testConnection, grantAccess, revokeAccess, listAuthorizedClients } = req
 const [,, cmd, macArg, ipArg] = process.argv;
 
 async function main() {
-  const host    = process.env.MIKROTIK_HOST     || '192.168.88.1';
-  const port    = process.env.MIKROTIK_API_PORT || '8728';
-  const user    = process.env.MIKROTIK_API_USER || 'pi-api';
-  const hotspot = process.env.MIKROTIK_HOTSPOT  || 'hotspot1';
-  const mock    = process.env.MIKROTIK_MOCK;
-
-  console.log(`\n🔌 MikroTik API Test`);
-  console.log(`   ${host}:${port}  user=${user}  hotspot=${hotspot}  mock=${mock}\n`);
+  const cfg = {
+    host:    process.env.MIKROTIK_HOST     || '192.168.88.1',
+    port:    process.env.MIKROTIK_API_PORT || '8728',
+    user:    process.env.MIKROTIK_API_USER || 'pi-api',
+    hotspot: process.env.MIKROTIK_HOTSPOT  || 'hotspot1',
+    mock:    process.env.MIKROTIK_MOCK,
+  };
+  console.log(`\n🔌 MikroTik API  ${cfg.host}:${cfg.port}  user=${cfg.user}  hotspot=${cfg.hotspot}  mock=${cfg.mock}\n`);
 
   const conn = await testConnection();
-  if (!conn.ok) {
-    console.error(`❌ Cannot connect: ${conn.error}`);
-    process.exit(1);
-  }
-  console.log(`✅ Connected — router identity: "${conn.identity}"\n`);
+  if (!conn.ok) { console.error(`❌ Cannot connect: ${conn.error}`); process.exit(1); }
+  console.log(`✅ Connected — router: "${conn.identity}"\n`);
 
   if (cmd === 'grant') {
     if (!macArg) { console.error('Usage: node test-mikrotik-api.js grant MAC [IP]'); process.exit(1); }
     console.log(`Granting ${macArg}${ipArg ? ` @ ${ipArg}` : ''}...`);
     const r = await grantAccess(macArg, 1, ipArg || null);
-    console.log(r.ok ? '✅ Grant OK' : `❌ Grant failed: ${r.error}`);
+    console.log(r.ok ? '✅ Grant OK' : `❌ ${r.error}`);
     console.log(`   activeSession: ${r.activeSession}`);
-    console.log(`   clientIp:      ${r.clientIp || 'unknown'}`);
+    console.log(`   clientIp:      ${r.clientIp}`);
     if (r.warning) console.log(`   warning: ${r.warning}`);
-    console.log(`\nVerify:\n  /ip hotspot user print where mac-address=${macArg.toUpperCase()}\n  /ip hotspot active print`);
     return;
   }
 
@@ -39,13 +35,17 @@ async function main() {
     return;
   }
 
-  const clients = await listAuthorizedClients();
-  console.log(`Active sessions: ${clients.length}`);
-  clients.forEach(c => console.log(`  • ${c['mac-address']}  ${c.address}  uptime=${c.uptime}`));
+  if (cmd === 'active') {
+    const clients = await listAuthorizedClients();
+    console.log(`Active sessions: ${clients.length}`);
+    clients.forEach(c => console.log(`  • ${c['mac-address']}  ${c.address}  uptime=${c.uptime}`));
+    return;
+  }
 
-  console.log('\nCommands:');
+  console.log('Commands:');
   console.log('  node test-mikrotik-api.js grant  AA:BB:CC:DD:EE:FF [192.168.88.x]');
   console.log('  node test-mikrotik-api.js revoke AA:BB:CC:DD:EE:FF');
+  console.log('  node test-mikrotik-api.js active');
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+main().catch(e => { console.error(e.message); process.exit(1); });
