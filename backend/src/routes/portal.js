@@ -13,11 +13,14 @@
  *   1. Frontend calls POST /api/:slug/access/grant
  *   2. Backend marks session as granted in DB
  *   3. Backend returns { hotspotLoginUrl } — the MikroTik login URL
- *   4. Frontend redirects the browser to that URL
- *   5. MikroTik receives the GET, authenticates the MAC, redirects to dst
+ *   4. Frontend does window.location.replace(hotspotLoginUrl)
+ *   5. MikroTik receives the GET from the client browser, authenticates
+ *      the MAC by username=mac&password=mac, then redirects to dst
  *
- * This means MikroTik handles session state natively — no API calls,
- * no address-list, sessions survive router reboots.
+ * IMPORTANT: Step 5 only works if:
+ *   a) The hotspot profile has login-by=mac, mac-auth-mode=mac-as-username-and-password
+ *   b) The walled garden allows dst-address=192.168.88.1 pre-auth
+ *   c) The browser actually reaches 192.168.88.1/login (not intercepted by WebView)
  */
 const express = require('express');
 const router  = express.Router();
@@ -51,8 +54,6 @@ router.get('/campaigns', (_req, res) => {
 });
 
 // ── GET /api/:slug/status ─────────────────────────────────────────────────
-// MikroTik Hotspot passes mac + ip + dst as query params on first redirect.
-// We store them so the grant endpoint can build the correct login URL.
 router.get('/:slug/status', (req, res) => {
   const c = getCampaignBySlug(req.params.slug);
   if (!c) return res.status(404).json({ error: 'Campaign not found' });
@@ -61,19 +62,17 @@ router.get('/:slug/status', (req, res) => {
   const mac = req.query.mac || req.query.username || null;
   const rawDstParam = req.query.dst || req.query['link-orig'] || null;
 
-  // Sanitize dst:
-  // 1. Decode up to 2 times (MikroTik sometimes double-encodes)
-  // 2. Strip if it points back to captive.local or the router login page
-  //    (happens when link-login was mistakenly included in the form)
   function sanitizeDst(raw) {
     if (!raw) return null;
     let d = raw;
     try { d = decodeURIComponent(d); } catch {}
     try { d = decodeURIComponent(d); } catch {}
-    // Strip probe URLs and self-referential URLs
-    const bad = ['captive.local', '192.168.88.1/login', '192.168.88.2', '/gen_204', '/generate_204', '/connecttest', '/ncsi', '/hotspot-detect', '/canonical.html'];
+    const bad = [
+      'captive.local', '192.168.88.1/login', '192.168.88.2',
+      '/gen_204', '/generate_204', '/connecttest', '/ncsi',
+      '/hotspot-detect', '/canonical.html', 'hotspot/login',
+    ];
     if (bad.some(b => d.includes(b))) return null;
-    // Must look like a real URL
     if (!d.startsWith('http')) return null;
     return d;
   }
@@ -147,7 +146,7 @@ router.post('/:slug/survey/submit', (req, res) => {
   if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
 
   const session = getSession(sessionId);
-  if (!session)       return res.status(404).json({ error: 'Session not found' });
+  if (!session)           return res.status(404).json({ error: 'Session not found' });
   if (!session.video_watched) return res.status(403).json({ error: 'Must watch video first' });
   if (!answers?.length)       return res.status(400).json({ error: 'Answers required' });
 
@@ -157,8 +156,12 @@ router.post('/:slug/survey/submit', (req, res) => {
 
 // ── POST /api/:slug/access/grant ──────────────────────────────────────────
 // Returns the MikroTik Hotspot login URL for the frontend to redirect to.
-// The browser visiting that URL is what actually grants internet access —
-// no server-side HTTP call to the router needed.
+// The browser visiting that URL is what actually grants internet access.
+//
+// FIX: We ALWAYS call markAccessGranted here — even if the session was already
+// marked. This handles the case where the browser bounces back to captive.local
+// after the MikroTik redirect (Android WebView behaviour), causing a second
+// grant call. The DB update is idempotent (just refreshes expires_at).
 router.post('/:slug/access/grant', (req, res) => {
   const { sessionId } = req.body;
   if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
@@ -171,35 +174,40 @@ router.post('/:slug/access/grant', (req, res) => {
   const c = getCampaignBySlug(req.params.slug);
   if (!c) return res.status(404).json({ error: 'Campaign not found' });
 
-  // Mark as granted in DB now (before redirect — router handles the actual session)
-  if (!isSessionActive(session)) {
-    markAccessGranted(sessionId, c.session_hours);
-  }
+  // Always mark granted — idempotent, safe to call multiple times
+  markAccessGranted(sessionId, c.session_hours);
 
   const mac = session.mac_address;
   const SUCCESS = process.env.SUCCESS_REDIRECT || 'http://www.google.com';
 
-  // Strip captive portal detection probe URLs — these are not real pages and
-  // cause the OS to re-trigger the portal after grant. Replace with SUCCESS_REDIRECT.
-  // Common probe URLs: /gen_204, /generate_204, /connecttest.txt, /ncsi.txt, /hotspot-detect.html
-  const PROBE_PATTERNS = ['/gen_204', '/generate_204', '/connecttest', '/ncsi', '/hotspot-detect', '/canonical.html', '/success.txt'];
+  // Strip captive portal detection probe URLs — these are not real pages.
+  // MikroTik sometimes passes /generate_204 or similar as the dst when a
+  // device triggers the portal via a connectivity check rather than real browsing.
+  const PROBE_PATTERNS = [
+    '/gen_204', '/generate_204', '/connecttest', '/ncsi',
+    '/hotspot-detect', '/canonical.html', '/success.txt',
+    'hotspot/login', 'captive.local',
+  ];
   const rawDst = session.dst_url || '';
   const isProbe = !rawDst || PROBE_PATTERNS.some(p => rawDst.includes(p));
   const dst = isProbe ? SUCCESS : rawDst;
 
-  console.log(`🎯 Grant dst: raw="${rawDst}" isProbe=${isProbe} using="${dst}"`);
+  console.log(`🎯 Grant: mac=${mac || 'none'} raw_dst="${rawDst}" isProbe=${isProbe} using="${dst}"`);
 
-  // Build the URL the browser needs to visit to authenticate with MikroTik
+  // Build the URL the browser needs to visit to authenticate with MikroTik.
+  // Format: http://192.168.88.1/login?username=MAC&password=MAC&dst=URL
+  // MikroTik matches username+password against its MAC auth table, grants the
+  // client's IP, then HTTP 302 redirects to dst.
   const { url: hotspotLoginUrl, mock } = buildLoginUrl(mac, dst);
 
   const expiresAt = new Date(Date.now() + c.session_hours * 3600000).toISOString();
 
-  console.log(`🌐 Access granted: mac=${mac || 'none'} campaign=${c.slug} hours=${c.session_hours} mock=${mock}`);
+  console.log(`🌐 Access granted: mac=${mac || 'none'} campaign=${c.slug} hours=${c.session_hours} mock=${mock} loginUrl=${hotspotLoginUrl}`);
 
   res.json({
     success:       true,
     expiresAt,
-    hotspotLoginUrl,  // frontend must redirect browser here
+    hotspotLoginUrl,  // frontend does: window.location.replace(hotspotLoginUrl)
     mock,
   });
 });

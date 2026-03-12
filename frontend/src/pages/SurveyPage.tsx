@@ -3,65 +3,20 @@ import { useNavigate } from 'react-router-dom';
 import { usePortal } from '../context/SessionContext';
 import { portalApi, SurveyAnswer } from '../lib/api';
 import { IconArrow, IconCheck, IconUnlock } from '../components/layout/Shell';
+import { setGrantedFlag, clearGrantedFlag, isGrantedFlagSet } from '../App';
 
-// Persist grant state across page reloads (MikroTik bounces back to captive.local)
-const GRANT_KEY = 'cp_granted';
-
-function setGrantedFlag() {
-  try { sessionStorage.setItem(GRANT_KEY, '1'); } catch {}
-}
-function clearGrantedFlag() {
-  try { sessionStorage.removeItem(GRANT_KEY); } catch {}
-}
-function isGrantedFlagSet() {
-  try { return sessionStorage.getItem(GRANT_KEY) === '1'; } catch { return false; }
-}
-
-// ── Connecting overlay ──────────────────────────────────────────────────────
-function ConnectingScreen() {
-  // Clear flag and try opening google.com directly after 3 seconds
-  // In case the WebView doesn't auto-redirect
-  useEffect(() => {
-    const t = setTimeout(() => {
-      // Try navigating to google — if internet is granted this will work
-      // If WebView blocks it, the button below is the fallback
-      window.location.replace('http://www.google.com');
-    }, 3000);
-    return () => clearTimeout(t);
-  }, []);
-
-  const dismiss = () => {
-    clearGrantedFlag();
-    window.location.replace('http://www.google.com');
-  };
-
-  return (
-    <div className="flex flex-col items-center justify-center py-16 gap-4 animate-fade-in">
-      <div className="relative">
-        <div className="absolute inset-0 rounded-full bg-signal/20 animate-ping-slow" />
-        <div className="relative w-16 h-16 rounded-full bg-gradient-to-br from-signal to-aqua
-          flex items-center justify-center">
-          <IconUnlock className="w-7 h-7 text-void" />
-        </div>
-      </div>
-      <div className="text-center px-6">
-        <p className="font-display font-bold text-white text-lg mb-1">Access Granted!</p>
-        <p className="text-sm text-white/40 font-body mb-1">Your device is authorized.</p>
-        <p className="text-xs text-white/25 font-body">Redirecting you now…</p>
-      </div>
-      <div className="w-6 h-6 rounded-full border-2 border-signal/40 border-t-signal animate-spin" />
-      <button onClick={dismiss}
-        className="mt-2 px-6 py-3 rounded-xl font-display font-bold text-sm
-          bg-signal/10 border border-signal/25 text-signal
-          hover:bg-signal/20 active:scale-95 transition-all duration-150">
-        Open Browser →
-      </button>
-      <p className="text-[10px] text-white/15 font-body text-center px-8">
-        Tap the button if you are not redirected automatically
-      </p>
-    </div>
-  );
-}
+/**
+ * SurveyPage
+ *
+ * Grant flow (live mode):
+ *   1. User finishes survey → submitSurvey() → doGrant()
+ *   2. doGrant() calls POST /access/grant → gets { hotspotLoginUrl, mock }
+ *   3. setGrantedFlag() is called BEFORE window.location.replace()
+ *   4. Browser navigates to MikroTik login URL (192.168.88.1/login?...)
+ *   5a. MikroTik grants access and redirects to google.com  ✓ done
+ *   5b. OR WebView bounces back to captive.local — App.tsx detects the flag
+ *       and routes to /connecting instead of PickerPage              ✓ fixed
+ */
 
 export function SurveyPage() {
   const { selectedSlug, status, config, loading, refresh } = usePortal();
@@ -73,48 +28,48 @@ export function SurveyPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error,      setError]      = useState('');
 
-  // granted: true = show connecting screen, block all navigation guards
-  const [granted, setGranted] = useState(() => isGrantedFlagSet());
-  const grantedRef = useRef(granted);
+  // If the grant flag is already set we should be on /connecting, not here.
+  // This handles edge cases where navigation lands here with stale flag.
+  useEffect(() => {
+    if (isGrantedFlagSet()) {
+      navigate('/connecting', { replace: true });
+    }
+  }, []);
 
   useEffect(() => {
-    if (grantedRef.current) return;  // ← block when connecting
     if (!selectedSlug) { navigate('/', { replace: true }); return; }
     if (!loading && !config) refresh();
   }, [selectedSlug]);
 
   useEffect(() => {
-    if (grantedRef.current) return; // already granting — don't interfere
     if (loading) return;
     if (status?.surveyDone)    { navigate('/success', { replace: true }); return; }
     if (!status?.videoWatched) { navigate('/watch',   { replace: true }); return; }
+    // No survey questions → skip straight to grant
     if (config && !config.survey?.questions?.length) doGrant();
   }, [loading, status, config]);
 
   const doGrant = async () => {
     if (!status || !selectedSlug) return;
-    // Set flag in both ref and sessionStorage BEFORE any async work
-    grantedRef.current = true;
-    setGrantedFlag();
-    setGranted(true);
     setSubmitting(true);
+    setError('');
     try {
+      // Set flag BEFORE the redirect so bounce-back is caught
+      setGrantedFlag();
       const result = await portalApi.grantAccess(selectedSlug, status.sessionId);
       if (result.mock) {
+        // Dev/mock: no real router — go to success page
         clearGrantedFlag();
         await refresh();
         navigate('/success', { replace: true });
       } else {
-        // Live: redirect browser to MikroTik login URL.
-        // MikroTik will authenticate MAC and redirect to google.com (or dst).
-        // The sessionStorage flag ensures if captive.local reloads, we show
-        // the connecting screen instead of restarting the picker flow.
+        // Live: hand off to MikroTik login URL.
+        // The browser visiting this URL is what actually authorizes the MAC.
+        // MikroTik then redirects to dst (google.com or whatever the client wanted).
         window.location.replace(result.hotspotLoginUrl);
       }
     } catch (e) {
-      grantedRef.current = false;
       clearGrantedFlag();
-      setGranted(false);
       setSubmitting(false);
       setError(e instanceof Error ? e.message : 'Failed to grant access');
     }
@@ -127,7 +82,8 @@ export function SurveyPage() {
       setTimeout(() => { setCurrent(c => c + 1); setSliding(false); }, 200);
       return;
     }
-    setSubmitting(true); setError('');
+    setSubmitting(true);
+    setError('');
     try {
       const payload: SurveyAnswer[] = questions.map(qq => ({
         question_id: qq.id, question: qq.text, answer: answers[qq.id] ?? '',
@@ -135,13 +91,11 @@ export function SurveyPage() {
       await portalApi.submitSurvey(selectedSlug, status.sessionId, payload);
       await doGrant();
     } catch (e) {
+      clearGrantedFlag();
       setError(e instanceof Error ? e.message : 'Submission failed');
       setSubmitting(false);
     }
   };
-
-  // Show connecting screen immediately if flag is set (survives reload)
-  if (granted) return <ConnectingScreen />;
 
   if (loading && !config) {
     return (
@@ -229,12 +183,21 @@ export function SurveyPage() {
       <button onClick={advance} disabled={!answered || submitting}
         className="btn-primary flex items-center justify-center gap-2.5 animate-fade-up anim-d4">
         {submitting ? (
-          <><span className="w-4 h-4 rounded-full border-2 border-void/40 border-t-void animate-spin" />
-          <span>Connecting…</span></>
+          <>
+            <span className="w-4 h-4 rounded-full border-2 border-void/40 border-t-void animate-spin" />
+            <span>Connecting…</span>
+          </>
         ) : isLast ? (
-          <><span>Get Internet Access</span><IconArrow className="w-4 h-4" /></>
+          <>
+            <IconUnlock className="w-4 h-4" />
+            <span>Get Internet Access</span>
+            <IconArrow className="w-4 h-4" />
+          </>
         ) : (
-          <><span>Next Question</span><IconArrow className="w-4 h-4" /></>
+          <>
+            <span>Next Question</span>
+            <IconArrow className="w-4 h-4" />
+          </>
         )}
       </button>
     </div>
