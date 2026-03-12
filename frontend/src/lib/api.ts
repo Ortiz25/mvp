@@ -1,5 +1,3 @@
-// src/lib/api.ts
-
 async function req<T>(url: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     headers: { 'Content-Type': 'application/json' },
@@ -11,8 +9,6 @@ async function req<T>(url: string, opts?: RequestInit): Promise<T> {
   }
   return res.json();
 }
-
-// ── Types ──────────────────────────────────────────────────────────────────
 
 export interface CampaignSummary {
   id:                 string;
@@ -36,8 +32,8 @@ export interface PortalStatus {
   accessGranted: boolean;
   active:        boolean;
   expiresAt:     string | null;
-  mac:           string | null;
-  dst:           string | null;
+  mac:           string | null;  // from session DB — fallback if URL params lost
+  dst:           string | null;  // original destination URL — used for MikroTik /login redirect
 }
 
 export interface SurveyQuestion {
@@ -66,34 +62,17 @@ export interface SurveyAnswer {
 }
 
 export interface HotspotParams {
-  mac:      string | null;
-  ip:       string | null;
-  dst:      string | null;
-  identity: string | null;
+  mac: string | null;
+  ip:  string | null;
+  dst: string | null;
 }
 
-/**
- * Response from POST /api/:slug/access/grant
- *
- * granted  — true if the MikroTik REST API call succeeded and the MAC
- *            has been added to /ip/hotspot/user. RouterOS will auto-auth
- *            the client on its next packet (within 1-2 seconds).
- *
- * mock     — true in dev mode (MIKROTIK_MOCK=true). No real router call made.
- *
- * In both cases the frontend navigates to /connecting which shows
- * "Access Granted — tap Open Browser". No redirect to 192.168.88.1 needed.
- */
 export interface GrantResult {
   success:   boolean;
   granted:   boolean;
   mock:      boolean;
   expiresAt: string;
-  // hotspotLoginUrl is null in the new REST API model — kept for type compat
-  hotspotLoginUrl: string | null;
 }
-
-// ── API calls ──────────────────────────────────────────────────────────────
 
 export const listCampaigns = () =>
   req<{ campaigns: CampaignSummary[] }>('/api/campaigns')
@@ -124,11 +103,6 @@ export const portalApi = {
       body: JSON.stringify({ sessionId, answers }),
     }),
 
-  /**
-   * Grant access — calls MikroTik REST API server-side.
-   * RouterOS adds the MAC to /ip/hotspot/user and auto-authenticates the client.
-   * Frontend should navigate to /connecting after this resolves.
-   */
   grantAccess: (slug: string, sessionId: string) =>
     req<GrantResult>(`/api/${slug}/access/grant`, {
       method: 'POST',

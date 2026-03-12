@@ -4,37 +4,25 @@
   <!--
     MikroTik Hotspot login page — upload to: flash/hotspot/login.html
 
-    RouterOS serves this file to unauthenticated clients instead of
-    its built-in login form. We use it purely as a redirect bridge.
+    RouterOS replaces $(mac), $(ip), $(link-orig) before serving this file.
 
-    HOW THE FLOW WORKS:
-      1. Client connects to CityNet WiFi, tries http://example.com
-      2. MikroTik intercepts → serves THIS file from flash/hotspot/login.html
-      3. This file immediately redirects to captive.local/ with hotspot params:
-           http://captive.local/?mac=AA:BB:CC&ip=192.168.88.x&dst=http://example.com
-      4. The React portal on the Pi handles video/survey
-      5. After completion, the Pi frontend does:
-           window.location.replace('http://192.168.88.1/login?username=MAC&password=MAC&dst=http://example.com')
-      6. MikroTik receives that GET from the client browser, matches the MAC,
-         grants internet access, redirects browser to http://example.com
+    WHAT THIS FILE DOES:
+      MikroTik intercepts the client's first HTTP request and serves this
+      file. We immediately redirect to the React portal on the Pi, passing
+      mac, ip, and the original destination URL as query params.
 
-    TEMPLATE VARIABLES (RouterOS replaces these before serving the file):
-      $(mac)       — client MAC address, e.g. AA:BB:CC:DD:EE:FF
-      $(ip)        — client IP address,  e.g. 192.168.88.10
-      $(link-orig) — the URL the client originally requested, URL-encoded
-                     e.g. http%3A%2F%2Fexample.com
+    WHAT HAPPENS AFTER THE PORTAL:
+      The React portal does NOT try to redirect to google.com.
+      Instead, after grant, it redirects to:
+        http://192.168.88.1/login?username=MAC&password=MAC&dst=ORIG_URL
 
-    WHY NOT $(link-login)?
-      $(link-login) = the URL of THIS router login page itself.
-      Using it as ?dst= causes an infinite loop:
-        captive.local → 192.168.88.1/login?dst=captive.local/login → captive.local → ...
-      Always use $(link-orig) for the destination.
+      MikroTik receives that GET request FROM THE BROWSER (important),
+      looks up the MAC in /ip/hotspot/user (already added by the Pi API),
+      authenticates the session at network layer, then redirects the browser
+      to ORIG_URL (or google.com if dst is empty).
 
-    WHY META REFRESH + FORM?
-      Android captive portal WebView blocks JavaScript on many versions.
-      META REFRESH is honoured by the WebView. The <script> form submit
-      fires for full browsers. Both produce the same redirect — whichever
-      fires first wins.
+      The OS captive portal detector sees a successful redirect to the
+      internet and permanently dismisses the captive portal WebView.
   -->
   <meta http-equiv="refresh"
     content="0;url=http://captive.local/?mac=$(mac)&ip=$(ip)&dst=$(link-orig)" />
@@ -45,16 +33,13 @@
     <input type="hidden" name="ip"  value="$(ip)"  />
     <input type="hidden" name="dst" value="$(link-orig)" />
     <noscript>
-      <p style="font-family:sans-serif;text-align:center;margin-top:40px;color:#333">
-        Tap below to continue to the CityNet portal:
-      </p>
-      <div style="text-align:center;margin-top:16px">
+      <p style="font-family:sans-serif;text-align:center;margin-top:40px">
         <button type="submit"
           style="padding:14px 32px;font-size:16px;border-radius:10px;
                  background:#22d3ee;border:none;color:#000;cursor:pointer;font-weight:bold">
-          Continue to Portal →
+          Continue to CityNet Portal →
         </button>
-      </div>
+      </p>
     </noscript>
   </form>
   <script>document.redirect.submit();</script>

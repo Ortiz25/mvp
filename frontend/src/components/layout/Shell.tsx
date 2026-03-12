@@ -28,11 +28,11 @@ const STEPS = [
   { path: '/',        label: 'Pick',   Icon: IconSignal },
   { path: '/watch',   label: 'Watch',  Icon: IconPlay },
   { path: '/survey',  label: 'Survey', Icon: IconClipboard },
-  { path: '/success', label: 'Online', Icon: IconUnlock },
+  { path: '/connecting', label: 'Online', Icon: IconUnlock },
 ];
 
 const TABS = [
-  { path: '/',       label: 'Portal', Icon: IconWifi,  group: ['/', '/watch', '/survey', '/success'] },
+  { path: '/',       label: 'Portal', Icon: IconWifi,  group: ['/', '/watch', '/survey', '/connecting'] },
   { path: '/offline',label: 'Apps',   Icon: IconGrid,  group: ['/offline'] },
 ];
 
@@ -66,7 +66,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const { config, status } = usePortal();
 
   const stepIdx   = STEPS.findIndex(s => s.path === pathname);
-  const showSteps = stepIdx >= 0 && pathname !== '/success';
+  const showSteps = stepIdx >= 0 && pathname !== '/connecting';
   const isOnline  = !!(status?.accessGranted && status?.active);
   const campName  = config?.campaign?.name;
 

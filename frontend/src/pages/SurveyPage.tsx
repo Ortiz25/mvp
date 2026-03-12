@@ -3,10 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { usePortal } from '../context/SessionContext';
 import { portalApi, SurveyAnswer } from '../lib/api';
 import { IconArrow, IconCheck, IconUnlock } from '../components/layout/Shell';
-import { setGrantedFlag, clearGrantedFlag, isGrantedFlagSet } from '../App';
 
 export function SurveyPage() {
-  const { selectedSlug, status, config, loading, refresh } = usePortal();
+  const { selectedSlug, status, config, loading, refresh, hotspot } = usePortal();
   const navigate = useNavigate();
 
   const [current,    setCurrent]    = useState(0);
@@ -16,16 +15,23 @@ export function SurveyPage() {
   const [error,      setError]      = useState('');
 
   useEffect(() => {
-    if (isGrantedFlagSet()) { navigate('/connecting', { replace: true }); return; }
-    if (!selectedSlug)      { navigate('/', { replace: true }); return; }
+    if (!selectedSlug) { navigate('/', { replace: true }); return; }
     if (!loading && !config) refresh();
   }, [selectedSlug]);
 
   useEffect(() => {
     if (loading) return;
-    if (status?.surveyDone)    { navigate('/success', { replace: true }); return; }
-    if (!status?.videoWatched) { navigate('/watch',   { replace: true }); return; }
-    if (config && !config.survey?.questions?.length) doGrant();
+    // Already granted → go to connecting (which will do MikroTik login redirect)
+    if (status?.active || status?.accessGranted) {
+      navigate('/connecting', { replace: true }); return;
+    }
+    if (status && !status.videoWatched) {
+      navigate('/watch', { replace: true }); return;
+    }
+    // No survey questions → go straight to grant
+    if (config && !config.survey?.questions?.length) {
+      doGrant();
+    }
   }, [loading, status, config]);
 
   const doGrant = async () => {
@@ -33,18 +39,11 @@ export function SurveyPage() {
     setSubmitting(true);
     setError('');
     try {
-      const result = await portalApi.grantAccess(selectedSlug, status.sessionId);
-      if (result.mock) {
-        clearGrantedFlag();
-        await refresh();
-        navigate('/success', { replace: true });
-      } else {
-        // Set flag AFTER successful grant — store expiry from server
-        setGrantedFlag(result.expiresAt);
-        navigate('/connecting', { replace: true });
-      }
+      await portalApi.grantAccess(selectedSlug, status.sessionId);
+      // Refresh server state then navigate — server now returns accessGranted=true
+      await refresh();
+      navigate('/connecting', { replace: true });
     } catch (e) {
-      clearGrantedFlag();
       setSubmitting(false);
       setError(e instanceof Error ? e.message : 'Failed to grant access');
     }
@@ -66,7 +65,6 @@ export function SurveyPage() {
       await portalApi.submitSurvey(selectedSlug, status.sessionId, payload);
       await doGrant();
     } catch (e) {
-      clearGrantedFlag();
       setError(e instanceof Error ? e.message : 'Submission failed');
       setSubmitting(false);
     }
@@ -86,7 +84,7 @@ export function SurveyPage() {
     return (
       <div className="flex flex-col items-center justify-center py-16 gap-3">
         <div className="w-8 h-8 rounded-full border-2 border-signal/30 border-t-signal animate-spin" />
-        <p className="text-sm text-white/30 font-body">Connecting you to the internet…</p>
+        <p className="text-sm text-white/30 font-body">Connecting…</p>
       </div>
     );
   }

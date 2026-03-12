@@ -35,8 +35,7 @@ function CampaignCard({ camp, selected, onClick }: { camp: CampaignSummary; sele
               <p className="text-[10px] text-white/35 font-body">by {camp.sponsor}</p>
             )}
           </div>
-          <div className={`shrink-0 transition-all duration-300
-            ${selected ? 'text-signal' : 'text-white/20'}`}>
+          <div className={`shrink-0 transition-all duration-300 ${selected ? 'text-signal' : 'text-white/20'}`}>
             <WifiArc strength={selected ? 3 : 2} />
           </div>
         </div>
@@ -61,151 +60,130 @@ function CampaignCard({ camp, selected, onClick }: { camp: CampaignSummary; sele
               No video
             </span>
           )}
-          {selected && (
-            <span className="chip chip-live gap-1 ml-auto">
-              <IconCheck className="w-3 h-3" />
-              Selected
-            </span>
-          )}
         </div>
       </div>
+      {selected && (
+        <div className="flex items-center gap-2 px-4 py-2.5 border-t border-signal/20 bg-signal/[0.04]">
+          <IconCheck className="w-3.5 h-3.5 text-signal" />
+          <span className="text-[11px] text-signal font-display font-bold">Selected</span>
+        </div>
+      )}
     </button>
   );
 }
 
 export function PickerPage() {
+  const { hotspot, selectCampaign, refresh, status } = usePortal();
   const navigate = useNavigate();
-  const { selectCampaign, refresh, hotspot } = usePortal();
-  const [campaigns,   setCampaigns]   = useState<CampaignSummary[]>([]);
-  const [selected,    setSelected]    = useState<string | null>(null);
-  const [loadingList, setLoadingList] = useState(true);
-  const [starting,    setStarting]    = useState(false);
-  const [error,       setError]       = useState('');
 
-  // Show hotspot debug info in dev / when no mac yet
-  const showDebug = !hotspot.mac;
+  const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]);
+  const [selected,  setSelected]  = useState<string | null>(null);
+  const [loadingCampaigns, setLoadingCampaigns] = useState(true);
+  const [starting,  setStarting]  = useState(false);
 
   useEffect(() => {
-    setLoadingList(true);
     listCampaigns()
-      .then(list => {
-        setCampaigns(list);
-        if (list.length === 1) setSelected(list[0].slug);
-      })
-      .catch(e => setError(e instanceof Error ? e.message : 'Failed to load campaigns'))
-      .finally(() => setLoadingList(false));
+      .then(c => { setCampaigns(c); if (c.length === 1) setSelected(c[0].slug); })
+      .catch(() => {})
+      .finally(() => setLoadingCampaigns(false));
   }, []);
+
+  // If server says already active → go straight to connecting
+  useEffect(() => {
+    if (status?.active || status?.accessGranted) {
+      navigate('/connecting', { replace: true });
+    }
+  }, [status]);
 
   const handleStart = async () => {
     if (!selected || starting) return;
-    setStarting(true); setError('');
-    try {
-      selectCampaign(selected);
-      await refresh(selected);
-      navigate('/watch');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to start session');
-      setStarting(false);
-    }
+    setStarting(true);
+    selectCampaign(selected);
+    await refresh();
+    // refresh() sets status — the useEffect above will handle routing
+    // But also check directly in case the effect fires too late
+    setStarting(false);
+    navigate('/watch', { replace: true });
   };
 
+  // Debug section — visible when mac is missing
+  const debugVisible = !hotspot.mac;
+
   return (
-    <div className="px-5 py-6">
-      {/* Hero */}
-      <div className="mb-5 animate-fade-up">
-        <p className="text-[9px] font-display font-bold uppercase tracking-[0.2em] text-signal/60 mb-2">
-          Step 01 — Select Campaign
-        </p>
-        <h2 className="font-display font-extrabold text-[22px] text-white leading-tight tracking-tight mb-1.5">
-          Get Free Internet<br />
-          <span className="text-gradient">Access Today</span>
-        </h2>
-        <p className="text-[12px] text-white/35 font-body leading-relaxed">
-          Pick a campaign, watch a short clip, get online — no sign-up needed.
+    <div className="px-5 py-5">
+      {/* Header */}
+      <div className="mb-6 animate-fade-up">
+        <div className="flex items-center gap-2.5 mb-3">
+          <div className="w-8 h-8 rounded-lg bg-signal/10 border border-signal/20 flex items-center justify-center">
+            <IconSignal className="w-4 h-4 text-signal" />
+          </div>
+          <span className="font-display font-bold text-sm text-white/60 tracking-wide">CityNet</span>
+        </div>
+        <h1 className="font-display font-extrabold text-[26px] text-white leading-tight tracking-tight mb-1.5">
+          Free Internet<br />Access
+        </h1>
+        <p className="text-sm text-white/40 font-body leading-relaxed">
+          {hotspot.mac
+            ? `Device: ${hotspot.mac}`
+            : 'Choose a campaign to get started'}
         </p>
       </div>
-
-      {/* ── DEBUG PANEL — visible when MAC is missing ─────────────────── */}
-      {showDebug && (
-        <div className="mb-4 px-3 py-2.5 rounded-xl border border-amber-500/20 bg-amber-500/[0.05] animate-fade-up">
-          <p className="text-[9px] font-mono font-bold text-amber-400/70 uppercase tracking-widest mb-1.5">
-            Debug — Hotspot Params
-          </p>
-          <div className="space-y-0.5 font-mono text-[10px] text-white/40">
-            <div>mac: <span className="text-amber-400/80">{hotspot.mac ?? '⚠ missing'}</span></div>
-            <div>ip:  <span className="text-white/30">{hotspot.ip  ?? '—'}</span></div>
-            <div>dst: <span className="text-white/30">{hotspot.dst ?? '—'}</span></div>
-            <div>url: <span className="text-white/20 break-all">{window.location.href}</span></div>
-          </div>
-          <p className="text-[9px] text-amber-400/40 font-body mt-1.5 leading-relaxed">
-            MAC missing = MikroTik params not received. Check login.html on router.
-          </p>
-        </div>
-      )}
 
       {/* Campaign list */}
-      <div className="mb-5 animate-fade-up anim-d2">
-        <div className="flex items-center justify-between mb-2.5">
-          <p className="text-[9px] font-display font-bold uppercase tracking-[0.15em] text-white/25">
-            Available
-          </p>
-          {campaigns.length > 0 && (
-            <span className="text-[9px] font-mono text-white/20">{campaigns.length} active</span>
-          )}
+      {loadingCampaigns ? (
+        <div className="flex items-center justify-center py-12">
+          <div className="w-7 h-7 rounded-full border-2 border-signal/30 border-t-signal animate-spin" />
         </div>
-
-        {loadingList ? (
-          <div className="flex flex-col items-center py-14 gap-3">
-            <div className="w-8 h-8 rounded-full border-2 border-signal/20 border-t-signal animate-spin" />
-            <p className="text-xs text-white/25 font-body">Loading campaigns…</p>
-          </div>
-        ) : error ? (
-          <div className="rounded-xl border border-red-500/20 bg-red-500/[0.06] px-4 py-4 text-center">
-            <p className="text-sm text-red-400 font-body mb-2">{error}</p>
-            <button onClick={() => window.location.reload()}
-              className="text-[11px] text-red-400/60 underline underline-offset-2 hover:text-red-400">
-              Retry
-            </button>
-          </div>
-        ) : campaigns.length === 0 ? (
-          <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-12 text-center">
-            <IconSignal className="w-8 h-8 mx-auto mb-3 text-white/15" />
-            <p className="text-sm text-white/30 font-body">No active campaigns right now.</p>
-            <p className="text-[11px] text-white/15 font-body mt-1">Check back soon.</p>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-2.5 max-h-[calc(3.5*118px)] overflow-y-auto pr-0.5">
-            {campaigns.map(c => (
-              <CampaignCard key={c.slug} camp={c}
-                selected={selected === c.slug}
-                onClick={() => setSelected(c.slug)} />
-            ))}
-          </div>
-        )}
-      </div>
-
-      {error && !loadingList && (
-        <div className="mb-4 px-4 py-3 rounded-xl bg-red-500/[0.07] border border-red-500/20 text-sm text-red-400 font-body">
-          {error}
+      ) : campaigns.length === 0 ? (
+        <div className="text-center py-12">
+          <p className="text-white/30 font-body text-sm">No campaigns available right now.</p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3 mb-5 animate-fade-up anim-d1">
+          {campaigns.map(c => (
+            <CampaignCard
+              key={c.slug}
+              camp={c}
+              selected={selected === c.slug}
+              onClick={() => setSelected(c.slug)}
+            />
+          ))}
         </div>
       )}
 
-      {/* CTA */}
-      <div className="animate-fade-up anim-d4">
-        <button onClick={handleStart} disabled={!selected || starting || loadingList}
-          className="btn-primary flex items-center justify-center gap-2.5">
-          {starting ? (
-            <><span className="w-4 h-4 rounded-full border-2 border-void/40 border-t-void animate-spin" />
-            <span>Starting…</span></>
-          ) : selected ? (
-            <><span>{campaigns.find(c => c.slug === selected)?.name ?? selected}</span>
-            <IconArrow className="w-4 h-4" /></>
-          ) : 'Select a campaign above'}
-        </button>
-        <p className="text-center text-[9px] text-white/15 font-body mt-3">
-          Continuing means you agree to our fair-use policy
-        </p>
-      </div>
+      {/* Start button */}
+      <button
+        onClick={handleStart}
+        disabled={!selected || starting}
+        className="btn-primary flex items-center justify-center gap-2.5 animate-fade-up anim-d2">
+        {starting ? (
+          <>
+            <span className="w-4 h-4 rounded-full border-2 border-void/40 border-t-void animate-spin" />
+            <span>Starting…</span>
+          </>
+        ) : (
+          <>
+            <span>Get Started</span>
+            <IconArrow className="w-4 h-4" />
+          </>
+        )}
+      </button>
+
+      {/* Debug panel — only shows when mac is missing */}
+      {debugVisible && (
+        <div className="mt-6 rounded-xl border border-yellow-500/20 bg-yellow-500/[0.04] px-4 py-3">
+          <p className="text-[10px] font-display font-bold text-yellow-400/60 uppercase tracking-wider mb-1.5">
+            Setup Required
+          </p>
+          <p className="text-[11px] text-yellow-300/50 font-body leading-relaxed">
+            No MAC address detected. This means the MikroTik login.html is not
+            redirecting to captive.local with <code className="text-yellow-200/60">?mac=</code> params.
+          </p>
+          <p className="text-[11px] text-yellow-300/30 font-body mt-1.5">
+            Check: flash/hotspot/login.html on your MikroTik router.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

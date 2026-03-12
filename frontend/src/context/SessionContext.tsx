@@ -1,43 +1,43 @@
-// src/context/SessionContext.tsx
 import { createContext, useContext, useState, useCallback, useRef, ReactNode } from 'react';
 import { CampaignSummary, CampaignConfig, PortalStatus, portalApi } from '../lib/api';
 
 /**
- * MikroTik Hotspot redirect URL format (after login-page=http://captive.local/ is set):
- *   http://captive.local/?mac=XX:XX:XX:XX:XX:XX&ip=192.168.88.x&dst=http://original
+ * Hotspot params — captured ONCE from the URL on first load.
  *
- * The login.html on flash/hotspot/ does a meta-refresh to the above URL.
- * We capture params on first load and persist to sessionStorage because:
- *   - React Router strips query params after SPA navigation
- *   - Params only arrive ONCE (on the initial MikroTik redirect)
- *   - Page reloads would lose them from the URL bar
+ * MikroTik redirects to: http://captive.local/?mac=XX&ip=YY&dst=ZZ
+ * These params are in window.location.search on the very first render.
  *
- * FALLBACK: If the router redirects to captive.local/login instead of captive.local/
- * (can happen on old firmware or if login-page= was not set), the params still
- * arrive in the query string — we read them the same way.
+ * STORAGE: We write to BOTH sessionStorage AND a module-level variable.
+ * - Module variable: survives React re-renders and React Router navigations
+ * - sessionStorage: survives page reloads within the same tab
+ *
+ * We do NOT use localStorage — if the user returns after their session
+ * expires we want a fresh start, not stale params from a previous session.
+ *
+ * CRITICAL: We read window.location.search directly, NOT from React Router,
+ * because BrowserRouter may strip query params during its initialisation.
  */
 
-const SS_KEY = 'cp_hotspot';
+const SS_KEY = 'cp_hotspot_v2';
 
 export interface HotspotParams {
-  mac:      string | null;
-  ip:       string | null;
-  dst:      string | null;
-  identity: string | null;
+  mac: string | null;
+  ip:  string | null;
+  dst: string | null;
 }
+
+// Module-level cache — survives React Router navigations within the tab
+let _cached: HotspotParams | null = null;
 
 function sanitizeDst(raw: string | null): string | null {
   if (!raw) return null;
   let d = raw;
-  // MikroTik sometimes double-encodes the dst value
   try { d = decodeURIComponent(d); } catch {}
   try { d = decodeURIComponent(d); } catch {}
-  // Reject internal/probe URLs — these are not real destinations
   const bad = [
     'captive.local', '192.168.88.1', '192.168.88.2',
     '/gen_204', '/generate_204', '/connecttest', '/ncsi',
-    '/hotspot-detect', '/canonical.html', 'hotspot/login',
-    '/login',
+    '/hotspot-detect', '/canonical.html', 'hotspot/login', '/login',
   ];
   if (bad.some(b => d.includes(b))) return null;
   if (!d.startsWith('http')) return null;
@@ -45,37 +45,39 @@ function sanitizeDst(raw: string | null): string | null {
 }
 
 function readHotspotParams(): HotspotParams {
-  // Always read from the RAW window.location — not React Router's view
-  const p = new URLSearchParams(window.location.search);
+  if (_cached) return _cached;
 
-  const mac      = p.get('mac') || p.get('username') || null;
-  const ip       = p.get('ip')  || null;
-  const rawDst   = p.get('dst') || p.get('link-orig') || p.get('link_orig') || null;
-  const dst      = sanitizeDst(rawDst);
-  const identity = p.get('identity') || null;
+  // Read from the raw URL — before React Router touches anything
+  const p   = new URLSearchParams(window.location.search);
+  const mac = p.get('mac') || p.get('username') || null;
+  const ip  = p.get('ip') || null;
+  const dst = sanitizeDst(p.get('dst') || p.get('link-orig') || null);
 
-  if (mac || dst) {
-    // Fresh MikroTik redirect — persist to sessionStorage
-    const params: HotspotParams = { mac, ip, dst, identity };
-    try {
-      sessionStorage.setItem(SS_KEY, JSON.stringify(params));
-      console.log('[Hotspot] Params captured from URL:', params, '| raw dst:', rawDst);
-    } catch {}
+  if (mac) {
+    // Fresh MikroTik redirect — save it
+    const params: HotspotParams = { mac, ip, dst };
+    _cached = params;
+    try { sessionStorage.setItem(SS_KEY, JSON.stringify(params)); } catch {}
+    console.log('[Hotspot] Params from URL:', params);
     return params;
   }
 
-  // No params in URL — try sessionStorage (covers SPA navigation + page reload)
+  // Try sessionStorage (page reload within same tab)
   try {
     const stored = sessionStorage.getItem(SS_KEY);
     if (stored) {
       const p2 = JSON.parse(stored) as HotspotParams;
-      console.log('[Hotspot] Params restored from sessionStorage:', p2);
-      return p2;
+      if (p2.mac) {
+        _cached = p2;
+        console.log('[Hotspot] Params from sessionStorage:', p2);
+        return p2;
+      }
     }
   } catch {}
 
-  console.log('[Hotspot] No params found — direct access or dev mode');
-  return { mac: null, ip: null, dst: null, identity: null };
+  const empty = { mac: null, ip: null, dst: null };
+  console.log('[Hotspot] No params — dev/direct access');
+  return empty;
 }
 
 interface Ctx {
@@ -88,17 +90,16 @@ interface Ctx {
   config:         CampaignConfig | null;
   loading:        boolean;
   error:          string | null;
-  refresh:        (slug?: string) => Promise<void>;
+  refresh:        () => Promise<void>;
 }
 
 const Ctx = createContext<Ctx>({
-  hotspot: { mac: null, ip: null, dst: null, identity: null },
+  hotspot: { mac: null, ip: null, dst: null },
   campaigns: [], setCampaigns: () => {}, selectedSlug: null, selectCampaign: () => {},
   status: null, config: null, loading: false, error: null, refresh: async () => {},
 });
 
 export function SessionProvider({ children }: { children: ReactNode }) {
-  // Capture hotspot params ONCE at mount — before React Router can touch the URL
   const hotspot = useRef<HotspotParams>(readHotspotParams()).current;
 
   const [campaigns,    setCampaigns]    = useState<CampaignSummary[]>([]);
@@ -118,8 +119,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setError(null);
   }, []);
 
-  const refresh = useCallback(async (overrideSlug?: string) => {
-    const slug = overrideSlug ?? slugRef.current ?? selectedSlug;
+  const refresh = useCallback(async () => {
+    const slug = slugRef.current ?? selectedSlug;
     if (!slug) return;
     setLoading(true);
     setError(null);
@@ -131,7 +132,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setStatus(s);
       setConfig(c);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load session');
+      setError(e instanceof Error ? e.message : 'Failed to load');
     } finally {
       setLoading(false);
     }
