@@ -15,63 +15,57 @@ server {
     client_max_body_size 512M;
     proxy_read_timeout   120s;
 
-    # ── CRITICAL: Block the /login path ──────────────────────────────────
-    # MikroTik Hotspot sets login-page=http://captive.local/ which means
-    # it redirects clients to captive.local. HOWEVER, if login-page is not
-    # set or is wrong, RouterOS may redirect to captive.local/login instead.
-    # nginx serving the React SPA at /login would serve index.html which then
-    # React Router can't match /login (no such route) and falls back to PickerPage.
-    # Worse: the hotspot polls captive.local/login as a keepalive — if nginx
-    # serves HTML instead of a 200/204 the hotspot goes into a redirect loop.
-    #
-    # FIX: Explicitly handle /login here and return the MikroTik redirect.
-    # This captures: captive.local/login?username=X&password=X&dst=Y
-    # and redirects back to the router's actual login handler.
-    location = /login {
-        # Return 200 so MikroTik's hotspot keepalive is satisfied.
-        # The actual grant is done by the frontend redirecting to 192.168.88.1/login
-        # NOT by captive.local/login.
-        return 200 "ok";
-        add_header Content-Type text/plain;
-    }
-
     # ── Captive portal OS detection endpoints ────────────────────────────
-    # These must return specific responses so OS captive portal detectors
-    # know the portal is present and open the login browser automatically.
-    # MikroTik Hotspot intercepts most of these itself at the router, but
-    # we handle them here too for devices that bypass the hotspot redirect.
-
-    # Android / Chrome — must return 204 (no content) when authorized,
-    # redirect to portal when not. Since nginx can't check auth state,
-    # return 204 always (MikroTik has already redirected unauthorized clients).
+    # These are returned BEFORE the SPA so OS detectors get correct responses.
+    # Android/Chrome expect 204 No Content from /generate_204 when online.
+    # Since all DNS resolves to the Pi, we return 204 always and let MikroTik
+    # handle the actual auth interception at the network layer.
     location = /generate_204         { return 204; }
     location = /gen_204              { return 204; }
 
-    # Android connection test
     location = /connecttest.txt      {
         add_header Content-Type text/plain;
         return 200 "Microsoft NCSI";
     }
-
-    # Windows NCSI
     location = /ncsi.txt             {
         add_header Content-Type text/plain;
         return 200 "Microsoft NCSI";
     }
-
-    # Firefox
     location = /canonical.html       { return 302 http://captive.local/; }
     location = /success.txt          {
         add_header Content-Type text/plain;
         return 200 "success";
     }
-
-    # Apple — must return exact HTML with <TITLE>Success</TITLE> when online
     location = /hotspot-detect.html  { return 302 http://captive.local/; }
-    location = /library/test/success.html {
+    location /library/test/success.html {
         add_header Content-Type text/html;
         return 200 "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>";
     }
+
+    # ── REMOVED: location = /login block ─────────────────────────────────
+    #
+    # The OLD config had:
+    #   location = /login { return 200 "ok"; }
+    #
+    # THIS WAS THE BUG causing the endless reload loop.
+    #
+    # When MikroTik hotspot profile does NOT have login-page= explicitly set,
+    # RouterOS redirects unauthenticated clients to:
+    #   http://captive.local/login?username=...&dst=...
+    # nginx was intercepting this with "return 200 ok" — so the browser
+    # received "ok" as plain text and stopped. It never reached the React SPA
+    # and never saw the portal UI. Reloading just repeated the same cycle.
+    #
+    # FIX: Remove the /login intercept entirely. Instead:
+    #   1. RouterOS hsprof1 now has login-page=http://captive.local/ explicitly
+    #      set (see mikrotik-setup.rsc). This makes RouterOS redirect to / not /login.
+    #   2. If /login IS still hit (e.g. old firmware, wrong profile), it now falls
+    #      through to the React SPA via the location / block below. React Router
+    #      doesn't have a /login route so it renders PickerPage — which is correct
+    #      because the hotspot params (mac, ip, dst) are in the query string and
+    #      SessionContext captures them on first render.
+    #
+    # DO NOT add location = /login back unless you fully understand the flow.
 
     # ── Node.js API ───────────────────────────────────────────────────────
     location /api/ {
@@ -105,9 +99,9 @@ server {
     }
 
     # ── React SPA (portal frontend) ───────────────────────────────────────
-    # try_files serves the built asset if it exists, otherwise serves
-    # index.html so React Router handles the route client-side.
-    # IMPORTANT: /login is handled above and must NOT fall through to here.
+    # Handles ALL unmatched paths including /login if it ever arrives here.
+    # React Router will render PickerPage for unknown routes — hotspot params
+    # are captured from the query string by SessionContext at mount time.
     location / {
         root       /home/admin/apps/mvp/frontend/dist;
         try_files  $uri $uri/ /index.html;
@@ -169,7 +163,7 @@ server {
     }
 }
 
-# ── Kiwix (Wikipedia offline) — enable when running ──────────────────────
+# ── Kiwix (Wikipedia offline) — uncomment when running ───────────────────
 # server {
 #     listen 80;
 #     server_name kiwix.local;

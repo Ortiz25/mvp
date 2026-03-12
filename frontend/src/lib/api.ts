@@ -75,18 +75,22 @@ export interface HotspotParams {
 /**
  * Response from POST /api/:slug/access/grant
  *
- * hotspotLoginUrl  — the URL the BROWSER must visit to authenticate with MikroTik.
- *                    In MOCK mode (MIKROTIK_MOCK=true) this is the SUCCESS_REDIRECT URL.
- *                    In LIVE mode this is http://192.168.88.1/login?username=MAC&password=MAC&dst=...
+ * granted  — true if the MikroTik REST API call succeeded and the MAC
+ *            has been added to /ip/hotspot/user. RouterOS will auto-auth
+ *            the client on its next packet (within 1-2 seconds).
  *
- * mock             — true when MIKROTIK_MOCK=true (dev/testing). Use this flag to decide
- *                    whether to redirect to /success (mock) or window.location.href (live).
+ * mock     — true in dev mode (MIKROTIK_MOCK=true). No real router call made.
+ *
+ * In both cases the frontend navigates to /connecting which shows
+ * "Access Granted — tap Open Browser". No redirect to 192.168.88.1 needed.
  */
 export interface GrantResult {
-  success:         boolean;
-  expiresAt:       string;
-  hotspotLoginUrl: string;
-  mock:            boolean;
+  success:   boolean;
+  granted:   boolean;
+  mock:      boolean;
+  expiresAt: string;
+  // hotspotLoginUrl is null in the new REST API model — kept for type compat
+  hotspotLoginUrl: string | null;
 }
 
 // ── API calls ──────────────────────────────────────────────────────────────
@@ -96,7 +100,6 @@ export const listCampaigns = () =>
     .then(r => r.campaigns);
 
 export const portalApi = {
-  // Pass Hotspot params as query string so backend can store mac + dst on session
   status: (slug: string, hotspot?: Partial<HotspotParams>) => {
     const q = new URLSearchParams();
     if (hotspot?.mac) q.set('mac', hotspot.mac);
@@ -122,16 +125,9 @@ export const portalApi = {
     }),
 
   /**
-   * Grant access — returns GrantResult.
-   *
-   * MOCK mode  (mock=true):  hotspotLoginUrl is the success destination.
-   *                          Navigate to /success FIRST, THEN optionally
-   *                          open hotspotLoginUrl (it's just google.com / fallback).
-   *
-   * LIVE mode  (mock=false): hotspotLoginUrl is the MikroTik Hotspot login URL.
-   *                          Set window.location.href to it — the BROWSER visiting
-   *                          that URL is what actually authenticates with the router.
-   *                          MikroTik then redirects to dst automatically.
+   * Grant access — calls MikroTik REST API server-side.
+   * RouterOS adds the MAC to /ip/hotspot/user and auto-authenticates the client.
+   * Frontend should navigate to /connecting after this resolves.
    */
   grantAccess: (slug: string, sessionId: string) =>
     req<GrantResult>(`/api/${slug}/access/grant`, {

@@ -1,22 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePortal } from '../context/SessionContext';
 import { portalApi, SurveyAnswer } from '../lib/api';
 import { IconArrow, IconCheck, IconUnlock } from '../components/layout/Shell';
 import { setGrantedFlag, clearGrantedFlag, isGrantedFlagSet } from '../App';
-
-/**
- * SurveyPage
- *
- * Grant flow (live mode):
- *   1. User finishes survey → submitSurvey() → doGrant()
- *   2. doGrant() calls POST /access/grant → gets { hotspotLoginUrl, mock }
- *   3. setGrantedFlag() is called BEFORE window.location.replace()
- *   4. Browser navigates to MikroTik login URL (192.168.88.1/login?...)
- *   5a. MikroTik grants access and redirects to google.com  ✓ done
- *   5b. OR WebView bounces back to captive.local — App.tsx detects the flag
- *       and routes to /connecting instead of PickerPage              ✓ fixed
- */
 
 export function SurveyPage() {
   const { selectedSlug, status, config, loading, refresh } = usePortal();
@@ -28,16 +15,10 @@ export function SurveyPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error,      setError]      = useState('');
 
-  // If the grant flag is already set we should be on /connecting, not here.
-  // This handles edge cases where navigation lands here with stale flag.
+  // If grant flag already set (bounce-back), go to connecting page
   useEffect(() => {
-    if (isGrantedFlagSet()) {
-      navigate('/connecting', { replace: true });
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!selectedSlug) { navigate('/', { replace: true }); return; }
+    if (isGrantedFlagSet()) { navigate('/connecting', { replace: true }); return; }
+    if (!selectedSlug)      { navigate('/', { replace: true }); return; }
     if (!loading && !config) refresh();
   }, [selectedSlug]);
 
@@ -45,7 +26,6 @@ export function SurveyPage() {
     if (loading) return;
     if (status?.surveyDone)    { navigate('/success', { replace: true }); return; }
     if (!status?.videoWatched) { navigate('/watch',   { replace: true }); return; }
-    // No survey questions → skip straight to grant
     if (config && !config.survey?.questions?.length) doGrant();
   }, [loading, status, config]);
 
@@ -54,19 +34,19 @@ export function SurveyPage() {
     setSubmitting(true);
     setError('');
     try {
-      // Set flag BEFORE the redirect so bounce-back is caught
+      // Set flag before async call — if anything fails we clear it
       setGrantedFlag();
       const result = await portalApi.grantAccess(selectedSlug, status.sessionId);
       if (result.mock) {
-        // Dev/mock: no real router — go to success page
+        // Dev mode — no real router, go to success page
         clearGrantedFlag();
         await refresh();
         navigate('/success', { replace: true });
       } else {
-        // Live: hand off to MikroTik login URL.
-        // The browser visiting this URL is what actually authorizes the MAC.
-        // MikroTik then redirects to dst (google.com or whatever the client wanted).
-        window.location.replace(result.hotspotLoginUrl);
+        // Live mode — MAC has been added to MikroTik hotspot user table.
+        // RouterOS will auto-auth the client within seconds.
+        // Go to /connecting which shows "Access Granted — tap Open Browser".
+        navigate('/connecting', { replace: true });
       }
     } catch (e) {
       clearGrantedFlag();
@@ -142,9 +122,9 @@ export function SurveyPage() {
       <div className="flex gap-1.5 mb-5 animate-fade-up anim-d1">
         {questions.map((_, i) => (
           <div key={i} className={`h-[3px] rounded-full transition-all duration-500 ease-out
-            ${i < current   ? 'flex-1 bg-signal' :
-              i === current  ? 'flex-[3] bg-white/50' :
-                               'flex-1 bg-white/[0.08]'}`} />
+            ${i < current  ? 'flex-1 bg-signal' :
+              i === current ? 'flex-[3] bg-white/50' :
+                              'flex-1 bg-white/[0.08]'}`} />
         ))}
       </div>
 

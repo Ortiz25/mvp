@@ -20,13 +20,9 @@ export function VideoPage() {
   const required = video?.requiredWatchPct ?? 0.8;
   const duration = video?.durationSeconds  ?? 120;
 
-  // Redirect to /connecting if somehow landing here with grant flag set
   useEffect(() => {
-    if (isGrantedFlagSet()) {
-      navigate('/connecting', { replace: true });
-      return;
-    }
-    if (!selectedSlug) { navigate('/', { replace: true }); return; }
+    if (isGrantedFlagSet()) { navigate('/connecting', { replace: true }); return; }
+    if (!selectedSlug)      { navigate('/', { replace: true }); return; }
     refresh();
     return () => clearInterval(timerRef.current);
   }, [selectedSlug]);
@@ -52,7 +48,7 @@ export function VideoPage() {
         await refresh();
         navigate('/success', { replace: true });
       } else {
-        window.location.replace(result.hotspotLoginUrl);
+        navigate('/connecting', { replace: true });
       }
     } catch (e) {
       clearGrantedFlag();
@@ -150,8 +146,9 @@ export function VideoPage() {
               : playing ? 'border-white/40 bg-white/10 text-white/80 scale-95'
               : 'border-white/20 bg-white/[0.05] text-white/40 group-hover:border-white/30 group-hover:text-white/60'}`}>
               {done ? <IconCheck className="w-6 h-6" />
-                : playing ? <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-                : <IconPlay className="w-6 h-6" />}
+                : playing
+                  ? <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                  : <IconPlay className="w-6 h-6" />}
             </div>
             <p className="relative text-[11px] text-white/35 font-body px-6 text-center leading-relaxed">
               {done ? 'Video complete — tap Continue below'
@@ -176,7 +173,9 @@ export function VideoPage() {
           <span className="text-xs text-white/30 font-mono tabular-nums">{pct}%</span>
         </div>
         <span className={`text-[11px] font-display font-semibold transition-colors duration-300 ${ready ? 'text-signal' : 'text-white/25'}`}>
-          {ready ? <span className="flex items-center gap-1"><IconCheck className="w-3.5 h-3.5" /> Ready</span> : `${reqPct - pct}% remaining`}
+          {ready
+            ? <span className="flex items-center gap-1"><IconCheck className="w-3.5 h-3.5" /> Ready</span>
+            : `${reqPct - pct}% remaining`}
         </span>
       </div>
 
