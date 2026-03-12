@@ -9,17 +9,53 @@ import { OfflinePage }     from './pages/OfflinePage';
 import { ConnectingPage }  from './pages/ConnectingPage';
 
 /**
- * Grant flag — persisted in sessionStorage so bounce-backs from MikroTik
- * (Android WebView reloading captive.local after grant) show ConnectingPage
- * instead of restarting the PickerPage flow.
+ * Grant flag storage — uses localStorage NOT sessionStorage.
+ *
+ * WHY localStorage:
+ *   After grant, the user taps "Open Browser" which triggers a navigation.
+ *   On Android captive portal WebView, this causes a full page reload of
+ *   captive.local — wiping sessionStorage entirely. localStorage survives
+ *   full navigations and tab restores.
+ *
+ *   We store the expiry time so we can auto-clear the flag after the session
+ *   ends, preventing the phone from being permanently stuck on ConnectingPage
+ *   on future visits.
+ *
+ * FLAG FORMAT: JSON { expiresAt: ISO string }
  */
-export const GRANT_KEY     = 'cp_granted';
-export const isGrantedFlagSet = () => { try { return sessionStorage.getItem(GRANT_KEY) === '1'; } catch { return false; } };
-export const setGrantedFlag   = () => { try { sessionStorage.setItem(GRANT_KEY, '1'); } catch {} };
-export const clearGrantedFlag = () => { try { sessionStorage.removeItem(GRANT_KEY); } catch {} };
+const GRANT_KEY = 'cp_granted_v2';
+
+export function setGrantedFlag(expiresAt?: string) {
+  try {
+    const exp = expiresAt || new Date(Date.now() + 8 * 3600000).toISOString();
+    localStorage.setItem(GRANT_KEY, JSON.stringify({ expiresAt: exp }));
+  } catch {}
+}
+
+export function clearGrantedFlag() {
+  try { localStorage.removeItem(GRANT_KEY); } catch {}
+  // Also clear old sessionStorage key from previous versions
+  try { sessionStorage.removeItem('cp_granted'); } catch {}
+}
+
+export function isGrantedFlagSet(): boolean {
+  try {
+    const raw = localStorage.getItem(GRANT_KEY);
+    if (!raw) return false;
+    const { expiresAt } = JSON.parse(raw);
+    if (expiresAt && new Date(expiresAt) < new Date()) {
+      // Session expired — clear flag so user can start fresh
+      localStorage.removeItem(GRANT_KEY);
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export default function App() {
-  const landing = isGrantedFlagSet()
+  const landingRoute = isGrantedFlagSet()
     ? <Navigate to="/connecting" replace />
     : <PickerPage />;
 
@@ -28,26 +64,13 @@ export default function App() {
       <BrowserRouter>
         <Shell>
           <Routes>
-            <Route path="/"           element={landing} />
-
-            {/*
-              /login safety net — MikroTik may redirect clients to captive.local/login
-              if the hotspot profile's login-page is misconfigured.
-              nginx handles /login with a 200 response so MikroTik's keepalive
-              doesn't loop, but if the React SPA ever loads at /login we
-              redirect back to / so the user sees PickerPage not a blank screen.
-
-              The REAL fix is in mikrotik-fix.rsc:
-                login-page=http://captive.local/   ← trailing slash, no /login
-            */}
-            <Route path="/login"      element={<Navigate to="/" replace />} />
-
+            <Route path="/"           element={landingRoute} />
             <Route path="/watch"      element={<VideoPage />} />
             <Route path="/survey"     element={<SurveyPage />} />
             <Route path="/success"    element={<SuccessPage />} />
             <Route path="/connecting" element={<ConnectingPage />} />
             <Route path="/offline"    element={<OfflinePage />} />
-            <Route path="*"           element={landing} />
+            <Route path="*"           element={landingRoute} />
           </Routes>
         </Shell>
       </BrowserRouter>

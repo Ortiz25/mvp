@@ -15,7 +15,6 @@ export function SurveyPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error,      setError]      = useState('');
 
-  // If grant flag already set (bounce-back), go to connecting page
   useEffect(() => {
     if (isGrantedFlagSet()) { navigate('/connecting', { replace: true }); return; }
     if (!selectedSlug)      { navigate('/', { replace: true }); return; }
@@ -34,18 +33,14 @@ export function SurveyPage() {
     setSubmitting(true);
     setError('');
     try {
-      // Set flag before async call — if anything fails we clear it
-      setGrantedFlag();
       const result = await portalApi.grantAccess(selectedSlug, status.sessionId);
       if (result.mock) {
-        // Dev mode — no real router, go to success page
         clearGrantedFlag();
         await refresh();
         navigate('/success', { replace: true });
       } else {
-        // Live mode — MAC has been added to MikroTik hotspot user table.
-        // RouterOS will auto-auth the client within seconds.
-        // Go to /connecting which shows "Access Granted — tap Open Browser".
+        // Set flag AFTER successful grant — store expiry from server
+        setGrantedFlag(result.expiresAt);
         navigate('/connecting', { replace: true });
       }
     } catch (e) {

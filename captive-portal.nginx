@@ -15,14 +15,35 @@ server {
     client_max_body_size 512M;
     proxy_read_timeout   120s;
 
-    # ── Captive portal OS detection endpoints ────────────────────────────
-    # These are returned BEFORE the SPA so OS detectors get correct responses.
-    # Android/Chrome expect 204 No Content from /generate_204 when online.
-    # Since all DNS resolves to the Pi, we return 204 always and let MikroTik
-    # handle the actual auth interception at the network layer.
-    location = /generate_204         { return 204; }
-    location = /gen_204              { return 204; }
+    # ── Captive portal OS detection endpoints ─────────────────────────────
+    #
+    # CRITICAL BEHAVIOUR CHANGE based on client auth state:
+    #
+    # PRE-AUTH (client not in hotspot active list):
+    #   MikroTik intercepts the /generate_204 request at the network layer
+    #   and redirects it to captive.local. So this nginx block handles it.
+    #   We return 204 — the OS sees "internet works" and dismisses the
+    #   captive portal WebView automatically. BUT MikroTik still blocks
+    #   real traffic until the MAC is in /ip/hotspot/user.
+    #   
+    #   Wait — actually we want the OS to SHOW the captive portal WebView
+    #   so the user can complete the video/survey flow. So for /generate_204
+    #   we should return 200 (not 204) to make the OS keep the WebView open.
+    #
+    # POST-AUTH (MAC added to /ip/hotspot/user by our backend):
+    #   MikroTik no longer intercepts — the request goes directly to google.
+    #   Google returns 204 from connectivitycheck.gstatic.com/generate_204.
+    #   OS detects internet and dismisses WebView. ✓
+    #
+    # SOLUTION: Return 200 (not 204) from our portal for connectivity checks.
+    # This keeps the captive portal WebView open pre-auth.
+    # Post-auth, the real internet serves 204 from google's servers directly.
+    #
+    location = /generate_204         { return 200; }
+    location = /gen_204              { return 200; }
 
+    # Windows NCSI — return proper response to keep "No internet" indicator
+    # showing until real internet is available
     location = /connecttest.txt      {
         add_header Content-Type text/plain;
         return 200 "Microsoft NCSI";
@@ -41,31 +62,6 @@ server {
         add_header Content-Type text/html;
         return 200 "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>";
     }
-
-    # ── REMOVED: location = /login block ─────────────────────────────────
-    #
-    # The OLD config had:
-    #   location = /login { return 200 "ok"; }
-    #
-    # THIS WAS THE BUG causing the endless reload loop.
-    #
-    # When MikroTik hotspot profile does NOT have login-page= explicitly set,
-    # RouterOS redirects unauthenticated clients to:
-    #   http://captive.local/login?username=...&dst=...
-    # nginx was intercepting this with "return 200 ok" — so the browser
-    # received "ok" as plain text and stopped. It never reached the React SPA
-    # and never saw the portal UI. Reloading just repeated the same cycle.
-    #
-    # FIX: Remove the /login intercept entirely. Instead:
-    #   1. RouterOS hsprof1 now has login-page=http://captive.local/ explicitly
-    #      set (see mikrotik-setup.rsc). This makes RouterOS redirect to / not /login.
-    #   2. If /login IS still hit (e.g. old firmware, wrong profile), it now falls
-    #      through to the React SPA via the location / block below. React Router
-    #      doesn't have a /login route so it renders PickerPage — which is correct
-    #      because the hotspot params (mac, ip, dst) are in the query string and
-    #      SessionContext captures them on first render.
-    #
-    # DO NOT add location = /login back unless you fully understand the flow.
 
     # ── Node.js API ───────────────────────────────────────────────────────
     location /api/ {
@@ -90,7 +86,7 @@ server {
         add_header        Cache-Control "public, max-age=86400";
     }
 
-    # ── Fingerprinted static assets (JS/CSS bundles from Vite build) ─────
+    # ── Fingerprinted static assets ───────────────────────────────────────
     location ~* \.(js|css|woff2?|png|jpg|svg|ico)$ {
         root       /home/admin/apps/mvp/frontend/dist;
         try_files  $uri =404;
@@ -98,10 +94,7 @@ server {
         access_log off;
     }
 
-    # ── React SPA (portal frontend) ───────────────────────────────────────
-    # Handles ALL unmatched paths including /login if it ever arrives here.
-    # React Router will render PickerPage for unknown routes — hotspot params
-    # are captured from the query string by SessionContext at mount time.
+    # ── React SPA ─────────────────────────────────────────────────────────
     location / {
         root       /home/admin/apps/mvp/frontend/dist;
         try_files  $uri $uri/ /index.html;
@@ -148,7 +141,7 @@ server {
     }
 }
 
-# ── Kolibri — walled garden pre-auth ─────────────────────────────────────
+# ── Kolibri ───────────────────────────────────────────────────────────────
 server {
     listen 80;
     server_name kolibri.local;
@@ -162,14 +155,3 @@ server {
         client_max_body_size 100M;
     }
 }
-
-# ── Kiwix (Wikipedia offline) — uncomment when running ───────────────────
-# server {
-#     listen 80;
-#     server_name kiwix.local;
-#     location / {
-#         proxy_pass http://127.0.0.1:8888;
-#         proxy_set_header Host $host;
-#         proxy_set_header X-Real-IP $remote_addr;
-#     }
-# }

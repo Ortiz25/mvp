@@ -41,7 +41,7 @@ export function VideoPage() {
     setSubmitting(true);
     setError('');
     try {
-      setGrantedFlag();
+      setGrantedFlag(result.expiresAt);
       const result = await portalApi.grantAccess(selectedSlug, status.sessionId);
       if (result.mock) {
         clearGrantedFlag();
