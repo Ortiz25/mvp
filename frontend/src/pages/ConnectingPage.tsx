@@ -1,115 +1,105 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { usePortal } from '../context/SessionContext';
 
 /**
- * ConnectingPage — Final auth trigger.
+ * ConnectingPage — the final step. Triggers MikroTik HTTP login.
  *
- * The Pi backend has already added the MAC to /ip/hotspot/user
- * and attempted /ip/hotspot/active/add.
+ * HOW MIKROTIK MAC-AUTH + HTTP LOGIN WORKS TOGETHER:
  *
- * If active/add succeeded → the phone already has internet.
- *   We just navigate to google to signal the OS.
+ *   login-by=mac means RouterOS authenticates clients BY LOOKING UP their
+ *   MAC in /ip/hotspot/user automatically. The Pi already added the MAC via
+ *   the binary API. So the user IS already authorised at the network layer.
  *
- * If active/add failed → the session is NOT yet active.
- *   We must trigger mac auto-auth by navigating to an HTTP URL.
- *   With login-by=mac, RouterOS intercepts any HTTP request and
- *   auto-authenticates if the MAC is in /ip/hotspot/user.
+ *   BUT the browser/OS doesn't know this yet. The captive portal WebView
+ *   only dismisses when it makes a successful HTTP request to the internet
+ *   (a real 204 from google, or a redirect to an external URL).
  *
- * CRITICAL: Must use HTTP not HTTPS. RouterOS hotspot only intercepts
- * plain HTTP. HTTPS goes straight through (or fails if not authenticated).
+ *   The way to trigger this is to send the browser to:
+ *     http://192.168.88.1/login?username=MAC&password=MAC&dst=ORIG
  *
- * NAVIGATION STRATEGY:
- * 1. Navigate to http://192.168.88.1/login?username=MAC&password=MAC&dst=...
- *    This hits RouterOS's hotspot web server directly (walled garden allows it).
- *    RouterOS creates the active session and 302s to dst.
- *    OS captive portal detector sees internet → dismisses WebView.
+ *   RouterOS receives this GET request from the client, finds the MAC in
+ *   /ip/hotspot/user, marks the SESSION as active (separate from user auth),
+ *   and redirects the browser to ORIG (or google.com if dst is absent).
  *
- * 2. If MAC is unavailable (shouldn't happen), navigate to http://www.google.com.
- *    RouterOS intercepts it (unauth client), checks MAC in user table,
- *    auto-authenticates, then forwards to google.
+ *   Now the browser is talking to the real internet. The OS captive portal
+ *   detector sees this and permanently dismisses the WebView.
+ *
+ * WHY NOT JUST WINDOW.LOCATION.REPLACE('http://google.com')?
+ *   Because the client's traffic is still blocked at network layer until
+ *   RouterOS marks the session active via the /login endpoint. The browser
+ *   would just get a connection error or be redirected back to captive.local.
+ *
+ * THIS PAGE:
+ *   Auto-redirects to the MikroTik /login URL after a short delay.
+ *   If MAC is not available (shouldn't happen in production), shows a
+ *   manual instruction instead.
  */
 export function ConnectingPage() {
   const { hotspot, status } = usePortal();
-  const fired  = useRef(false);
-  const [secs, setSecs] = useState(2);
+  const redirected = useRef(false);
 
+  // Build the MikroTik HTTP login URL
   const mac = hotspot.mac || status?.mac || null;
+  const dst = hotspot.dst || status?.dst || 'http://www.google.com';
 
-  // Determine where to send the browser.
-  // dst from MikroTik is usually generate_204 (filtered out by sanitizeDst),
-  // so we default to google. Must be HTTP — HTTPS dst breaks MikroTik /login redirect.
-  const safeDst = 'http://www.google.com';
-
-  // The MikroTik HTTP login URL. Hitting this URL causes RouterOS to:
-  // 1. Look up the MAC in /ip/hotspot/user
-  // 2. Create an active session  
-  // 3. 302 redirect to safeDst
-  // 4. OS sees real internet → dismisses captive portal WebView permanently
   const loginUrl = mac
-    ? `http://192.168.88.1/login?username=${encodeURIComponent(mac)}&password=${encodeURIComponent(mac)}&dst=${encodeURIComponent(safeDst)}`
-    : safeDst;
-
-  function navigate() {
-    window.location.href = loginUrl;
-  }
+    ? `http://192.168.88.1/login?username=${encodeURIComponent(mac)}&password=${encodeURIComponent(mac)}&dst=${encodeURIComponent(dst)}`
+    : null;
 
   useEffect(() => {
-    if (fired.current) return;
-    fired.current = true;
+    if (!loginUrl || redirected.current) return;
+    redirected.current = true;
 
-    const tick = setInterval(() => setSecs(s => Math.max(0, s - 1)), 1000);
-
+    // Short delay — gives the user a moment to see the "connected" screen
+    // and ensures RouterOS has fully committed the hotspot user entry
     const t = setTimeout(() => {
-      clearInterval(tick);
-      navigate();
-    }, 2000);
+      window.location.replace(loginUrl);
+    }, 1500);
 
-    return () => { clearTimeout(t); clearInterval(tick); };
-  }, []); // eslint-disable-line
+    return () => clearTimeout(t);
+  }, [loginUrl]);
 
   return (
     <div className="flex flex-col items-center justify-center py-16 gap-6 px-6 animate-fade-in">
 
-      {/* Success icon */}
+      {/* Animated unlock icon */}
       <div className="relative">
         <div className="absolute inset-0 rounded-full bg-signal/20 animate-ping-slow" />
         <div className="relative w-16 h-16 rounded-full bg-gradient-to-br from-signal to-aqua
           flex items-center justify-center">
-          <svg className="w-7 h-7 text-void" fill="none" viewBox="0 0 24 24"
-            stroke="currentColor" strokeWidth={2.5}>
+          <svg className="w-7 h-7 text-void" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round"
-              d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              d="M8 11V7a4 4 0 118 0v4M5 11h14a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2z" />
           </svg>
         </div>
       </div>
 
-      {/* Message */}
       <div className="text-center">
-        <p className="font-display font-bold text-white text-xl mb-1">
-          Access Granted!
-        </p>
+        <p className="font-display font-bold text-white text-xl mb-1">You're Connected!</p>
         <p className="text-sm text-white/50 font-body">
-          {secs > 0 ? `Connecting in ${secs}…` : 'Opening your browser…'}
+          {loginUrl ? 'Opening your browser…' : 'Access granted.'}
         </p>
       </div>
 
-      {/* Spinner */}
       <div className="w-6 h-6 rounded-full border-2 border-signal/40 border-t-signal animate-spin" />
 
-      {/* Manual button — in case auto-redirect is delayed */}
-      <button
-        onClick={navigate}
-        className="w-full py-4 rounded-xl font-display font-bold text-base
-          bg-signal border border-signal/40 text-void
-          hover:bg-signal/90 active:scale-95 transition-all duration-150">
-        Open Browser →
-      </button>
+      {/* Fallback if auto-redirect doesn't fire */}
+      {loginUrl && (
+        <a href={loginUrl}
+          className="w-full py-4 rounded-xl font-display font-bold text-base text-center
+            bg-signal border border-signal/40 text-void
+            hover:bg-signal/90 active:scale-95 transition-all duration-150 block">
+          Start Browsing →
+        </a>
+      )}
 
-      {/* Debug: show exactly what URL we'll navigate to */}
-      <div className="text-center px-4 space-y-1">
-        {mac && <p className="text-[10px] text-white/15 font-mono">{mac}</p>}
-        <p className="text-[9px] text-white/10 font-mono break-all">→ {loginUrl}</p>
-      </div>
+      {!loginUrl && (
+        <div className="w-full rounded-2xl border border-white/[0.08] bg-white/[0.03] px-5 py-4 text-center">
+          <p className="text-sm text-white/60 font-body">
+            Close this window and open your browser — you're online.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

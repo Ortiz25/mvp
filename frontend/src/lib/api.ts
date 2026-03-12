@@ -103,9 +103,9 @@ export const portalApi = {
       body: JSON.stringify({ sessionId, answers }),
     }),
 
-  grantAccess: (slug: string, sessionId: string, ip?: string | null) =>
+  grantAccess: (slug: string, sessionId: string) =>
     req<GrantResult>(`/api/${slug}/access/grant`, {
       method: 'POST',
-      body: JSON.stringify({ sessionId, ip: ip || null }),
+      body: JSON.stringify({ sessionId }),
     }),
 };
