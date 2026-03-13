@@ -9,20 +9,28 @@ export function ConnectingPage() {
   const { hotspot, status } = usePortal();
   const fired = useRef(false);
   const [countdown, setCountdown] = useState(3);
-  const mac = hotspot?.mac || status?.mac || null;
+
+  // Resolve MAC — must be a string before we can use it
+  const mac: string | null = hotspot?.mac || status?.mac || null;
+
+  // Build login URL only when MAC is known
+  const loginUrl = mac
+    ? `http://${ROUTER_IP}/login?username=${encodeURIComponent(mac)}&password=${encodeURIComponent(PASS)}`
+    : null;
 
   useEffect(() => {
-    if (fired.current || !mac) return;
+    if (fired.current) return;
     fired.current = true;
 
-    // Step 1 — fire-and-forget fetch to MikroTik login servlet
-    // This tells MikroTik to mark the session active immediately.
-    // We do NOT navigate here — just fetch silently in background.
-    const loginUrl = `http://${ROUTER_IP}/login?username=${encodeURIComponent(mac)}&password=${encodeURIComponent("password")}`;
-    fetch(loginUrl).catch(() => {});
+    // Fire-and-forget fetch — tells MikroTik to mark session active
+    // Only fires if we have a MAC. If no MAC, RADIUS already accepted
+    // the device so navigating to neverssl.com is enough.
+    if (loginUrl) {
+      fetch(loginUrl).catch(() => {});
+    }
 
-    // Step 2 — countdown then navigate to plain HTTP site
-    // neverssl.com triggers the OS connectivity check which dismisses the WebView
+    // Countdown then navigate to plain HTTP — triggers OS connectivity
+    // check and dismisses the captive portal WebView
     const interval = setInterval(() => {
       setCountdown(c => c - 1);
     }, 1000);
@@ -36,12 +44,12 @@ export function ConnectingPage() {
       clearTimeout(timer);
       clearInterval(interval);
     };
-  }, [mac]);
+  }, [loginUrl]);
 
   function goNow() {
-    fetch(
-      `http://${ROUTER_IP}/login?username=${encodeURIComponent(mac)}&password=${encodeURIComponent("password")}`
-    ).catch(() => {});
+    if (loginUrl) {
+      fetch(loginUrl).catch(() => {});
+    }
     setTimeout(() => {
       window.location.replace(FINAL_URL);
     }, 500);
