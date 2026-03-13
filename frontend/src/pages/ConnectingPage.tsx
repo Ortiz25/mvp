@@ -39,7 +39,7 @@ export function ConnectingPage() {
 const dst = 'http://neverssl.com';
 
 const loginUrl = mac
-  ? `http://192.168.88.1/login?username=${encodeURIComponent(mac)}&password=${encodeURIComponent(PASS)}&dst=${encodeURIComponent(dst)}`
+  ? `http://192.168.88.1/login?username=${encodeURIComponent(mac)}&password=${encodeURIComponent(mac)}&dst=${encodeURIComponent(dst)}`
   : dst;
   function goNow() {
     window.location.href = loginUrl;
