@@ -4,6 +4,12 @@ import { CampaignSummary, CampaignConfig, PortalStatus, portalApi } from '../lib
 /**
  * Hotspot params — captured ONCE from the URL on first load.
  * MikroTik redirects to: http://captive.local/?mac=XX&ip=YY&dst=ZZ
+ *
+ * If the portal opens without a MAC (OS probe path — login.html redirects
+ * to captive.local without params), the MAC is resolved server-side via
+ * MikroTik ARP lookup and returned in the /status response.
+ * We update hotspot.mac from the first status response that contains one
+ * so grant and ConnectingPage both have it.
  */
 
 const SS_KEY = 'cp_hotspot_v2';
@@ -64,7 +70,7 @@ function readHotspotParams(): HotspotParams {
     }
   } catch {}
 
-  console.log('[Hotspot] No params — dev/direct access');
+  console.log('[Hotspot] No params — will resolve MAC from /status (ARP)');
   return { mac: null, ip: null, dst: null };
 }
 
@@ -88,7 +94,10 @@ const Ctx = createContext<Ctx>({
 });
 
 export function SessionProvider({ children }: { children: ReactNode }) {
-  const hotspot = useRef<HotspotParams>(readHotspotParams()).current;
+  // hotspotRef holds the mutable copy; hotspot state drives re-renders
+  // so consumers see the updated MAC once ARP resolves it.
+  const hotspotRef                    = useRef<HotspotParams>(readHotspotParams());
+  const [hotspot, setHotspot]         = useState<HotspotParams>(hotspotRef.current);
 
   const [campaigns,    setCampaigns]    = useState<CampaignSummary[]>([]);
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
@@ -114,17 +123,28 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setError(null);
     try {
       const [s, c] = await Promise.all([
-        portalApi.status(slug, hotspot),
+        portalApi.status(slug, hotspotRef.current),
         portalApi.config(slug),
       ]);
       setStatus(s);
       setConfig(c);
+
+      // If we opened without a MAC and the backend resolved one via ARP,
+      // propagate it into hotspot so grant and ConnectingPage both see it.
+      if (!hotspotRef.current.mac && s.mac) {
+        console.log('[Hotspot] MAC resolved from /status (ARP):', s.mac);
+        const updated: HotspotParams = { ...hotspotRef.current, mac: s.mac };
+        hotspotRef.current = updated;
+        _cached = updated;
+        try { sessionStorage.setItem(SS_KEY, JSON.stringify(updated)); } catch {}
+        setHotspot(updated);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load');
     } finally {
       setLoading(false);
     }
-  }, [selectedSlug, hotspot]);
+  }, [selectedSlug]);
 
   return (
     <Ctx.Provider value={{

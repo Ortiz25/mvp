@@ -9,15 +9,13 @@
  *        b. INSERT into radreply (MAC, Session-Timeout=seconds)
  *        c. Fire-and-forget GET http://192.168.88.1/login?username=MAC&password=password
  *   3. Frontend navigates to /connecting
- *   4. ConnectingPage redirects to:
- *        http://192.168.88.1/login?username=MAC&password=password&dst=http://neverssl.com
- *   5. MikroTik confirms session via RADIUS → 302 → neverssl.com
- *   6. OS sees real internet → captive portal WebView dismissed
+ *   4. ConnectingPage navigates to http://neverssl.com (plain HTTP)
+ *   5. OS connectivity check passes → captive portal WebView dismissed
  */
 const express = require('express');
 const router  = express.Router();
 
-const { grantAccess } = require('../lib/radius');  // ← RADIUS, not mikrotik
+const { grantAccess } = require('../lib/radius');
 const { getAllCampaigns, getCampaignBySlug, getCampaignConfig } = require('../lib/campaigns');
 const {
   getOrCreateSession, getSession, isSessionActive,
@@ -52,6 +50,40 @@ function getClientIp(req) {
   );
 }
 
+/**
+ * getMacFromArp(ip)
+ * Looks up a client MAC by IP from MikroTik's ARP table via REST API.
+ * Used when the portal opens without a ?mac= param — OS probe requests
+ * hit captive.local directly without going through login.html substitution.
+ * Returns null on any failure — always non-fatal.
+ */
+async function getMacFromArp(ip) {
+  try {
+    const host = process.env.MIKROTIK_HOST     || '192.168.88.1';
+    const user = process.env.MIKROTIK_API_USER || 'admin';
+    const pass = process.env.MIKROTIK_API_PASS || 'm0t0m0t0';
+
+    const url  = `http://${host}/rest/ip/arp?address=${encodeURIComponent(ip)}`;
+    const resp = await fetch(url, {
+      headers: {
+        'Authorization': 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64'),
+      },
+      signal: AbortSignal.timeout(2000),
+    });
+
+    if (!resp.ok) return null;
+
+    const data  = await resp.json();
+    const entry = Array.isArray(data) ? data[0] : null;
+    const mac   = entry?.['mac-address'] || null;
+
+    if (mac) console.log(`[ARP] Resolved ${ip} → ${mac}`);
+    return mac;
+  } catch {
+    return null;
+  }
+}
+
 // ── GET /api/campaigns ────────────────────────────────────────────────────
 router.get('/campaigns', (_req, res) => {
   const campaigns = getAllCampaigns(false).map(c => ({
@@ -69,13 +101,19 @@ router.get('/campaigns', (_req, res) => {
 });
 
 // ── GET /api/:slug/status ─────────────────────────────────────────────────
-router.get('/:slug/status', (req, res) => {
+router.get('/:slug/status', async (req, res) => {
   const c = getCampaignBySlug(req.params.slug);
   if (!c) return res.status(404).json({ error: 'Campaign not found' });
 
-  const ip  = req.query.ip  || getClientIp(req);
-  const mac = req.query.mac || req.query.username || null;
+  const ip  = req.query.ip || getClientIp(req);
+  let   mac = req.query.mac || req.query.username || null;
   const dst = sanitizeDst(req.query.dst || req.query['link-orig'] || null);
+
+  // No MAC in URL — try to resolve from MikroTik ARP table using client IP.
+  // This handles OS probe requests where login.html redirects without params.
+  if (!mac && ip) {
+    mac = await getMacFromArp(ip);
+  }
 
   console.log(`[STATUS] slug=${req.params.slug} ip=${ip} mac=${mac} dst=${dst} raw_dst=${req.query.dst||null}`);
 
@@ -161,12 +199,25 @@ router.post('/:slug/access/grant', async (req, res) => {
   const c = getCampaignBySlug(req.params.slug);
   if (!c) return res.status(404).json({ error: 'Campaign not found' });
 
-  const mac   = session.mac_address;
+  let   mac   = session.mac_address;
   const hours = c.session_hours || 1;
 
-  console.log(`🎯 Grant: mac=${mac||'none'} campaign=${c.slug} hours=${hours}`);
+  // Last-chance MAC resolution — if session was created without a MAC
+  // (portal opened via OS probe), try ARP lookup now before granting.
+  if (!mac) {
+    const ip = getClientIp(req);
+    if (ip) mac = await getMacFromArp(ip);
+  }
 
-  // RADIUS grant — no IP needed, no timing-sensitive active/login call
+  if (!mac) {
+    console.error('⚠ Grant failed: no MAC address for session', sessionId);
+    return res.status(400).json({
+      error: 'Cannot grant access: MAC address unknown. Please reconnect to the WiFi and try again.',
+    });
+  }
+
+  console.log(`🎯 Grant: mac=${mac} campaign=${c.slug} hours=${hours}`);
+
   const result = await grantAccess(mac, hours);
 
   if (!result.ok) {

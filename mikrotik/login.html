@@ -1,47 +1,31 @@
 <html>
 <head>
   <title>CityNet</title>
-  <!--
-    MikroTik Hotspot login page — upload to: flash/hotspot/login.html
-
-    RouterOS replaces $(mac), $(ip), $(link-orig) before serving this file.
-
-    WHAT THIS FILE 
-      MikroTik intercepts the client's first HTTP request and serves this
-      file. We immediately redirect to the React portal on the Pi, passing
-      mac, ip, and the original destination URL as query params.
-
-    WHAT HAPPENS AFTER THE PORTAL:
-      The React portal does NOT try to redirect to google.com.
-      Instead, after grant, it redirects to:
-        http://192.168.88.1/login?username=MAC&password=MAC&dst=ORIG_URL
-
-      MikroTik receives that GET request FROM THE BROWSER (important),
-      looks up the MAC in /ip/hotspot/user (already added by the Pi API),
-      authenticates the session at network layer, then redirects the browser
-      to ORIG_URL (or google.com if dst is empty).
-
-      The OS captive portal detector sees a successful redirect to the
-      internet and permanently dismisses the captive portal WebView.
-  -->
-  <meta http-equiv="refresh"
-    content="0;url=http://captive.local/?mac=$(mac)&ip=$(ip)&dst=$(link-orig)" />
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 </head>
 <body>
-  <form name="redirect" action="http://captive.local/" method="get">
-    <input type="hidden" name="mac" value="$(mac)" />
-    <input type="hidden" name="ip"  value="$(ip)"  />
-    <input type="hidden" name="dst" value="$(link-orig)" />
-    <noscript>
-      <p style="font-family:sans-serif;text-align:center;margin-top:40px">
-        <button type="submit"
-          style="padding:14px 32px;font-size:16px;border-radius:10px;
-                 background:#22d3ee;border:none;color:#000;cursor:pointer;font-weight:bold">
-          Continue to CityNet Portal →
-        </button>
-      </p>
-    </noscript>
-  </form>
-  <script>document.redirect.submit();</script>
+<script>
+  var mac = "$(mac)";
+  var ip  = "$(ip)";
+  var dst = "$(link-orig)";
+
+  // If RouterOS substituted real values, mac will be like "0E:F6:67:09:FC:13"
+  // If not substituted, it stays as literal "$(mac)"
+  var macValid = mac && mac !== '$(mac)' && mac.indexOf('$') === -1;
+
+  if (macValid) {
+    window.location.replace(
+      'http://captive.local/' +
+      '?mac=' + encodeURIComponent(mac) +
+      '&ip='  + encodeURIComponent(ip)  +
+      '&dst=' + encodeURIComponent(dst)
+    );
+  } else {
+    // OS probe or direct access — no MAC available yet.
+    // Redirect without params; portal will poll /status to get MAC from backend.
+    window.location.replace('http://captive.local/');
+  }
+</script>
 </body>
 </html>
