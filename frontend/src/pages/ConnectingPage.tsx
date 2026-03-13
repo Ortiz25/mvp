@@ -1,36 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 import { usePortal } from '../context/SessionContext';
 
-const ROUTER_IP = '192.168.88.1';
-const PASS = 'password';
 const FINAL_URL = 'http://neverssl.com';
 
 export function ConnectingPage() {
   const { hotspot, status } = usePortal();
   const fired = useRef(false);
   const [countdown, setCountdown] = useState(3);
-
-  // Resolve MAC — must be a string before we can use it
   const mac: string | null = hotspot?.mac || status?.mac || null;
-
-  // Build login URL only when MAC is known
-  const loginUrl = mac
-    ? `http://${ROUTER_IP}/login?username=${encodeURIComponent(mac)}&password=${encodeURIComponent(PASS)}`
-    : null;
 
   useEffect(() => {
     if (fired.current) return;
     fired.current = true;
 
-    // Fire-and-forget fetch — tells MikroTik to mark session active
-    // Only fires if we have a MAC. If no MAC, RADIUS already accepted
-    // the device so navigating to neverssl.com is enough.
-    if (loginUrl) {
-      fetch(loginUrl).catch(() => {});
-    }
-
-    // Countdown then navigate to plain HTTP — triggers OS connectivity
-    // check and dismisses the captive portal WebView
+    // RADIUS grant already done by backend — MAC is in radcheck.
+    // Backend already fired the login fetch from Pi IP (trusted).
+    // We just need to navigate to plain HTTP to trigger OS
+    // connectivity detection and dismiss the WebView.
     const interval = setInterval(() => {
       setCountdown(c => c - 1);
     }, 1000);
@@ -44,15 +30,10 @@ export function ConnectingPage() {
       clearTimeout(timer);
       clearInterval(interval);
     };
-  }, [loginUrl]);
+  }, []);
 
   function goNow() {
-    if (loginUrl) {
-      fetch(loginUrl).catch(() => {});
-    }
-    setTimeout(() => {
-      window.location.replace(FINAL_URL);
-    }, 500);
+    window.location.replace(FINAL_URL);
   }
 
   return (

@@ -42,7 +42,9 @@ function pool() {
   return _pool;
 }
 
-const RADIUS_PASS = 'password'; // Static shared secret — not user-facing
+const MIKROTIK_HOST  = process.env.MIKROTIK_HOST || '192.168.88.1';
+const RADIUS_PASS    = 'password'; // Static shared secret — not user-facing
+const LOGIN_DELAY_MS = 300;        // Give FreeRADIUS time to commit before MikroTik re-checks
 
 /**
  * grantAccess(mac, hours)
@@ -69,16 +71,20 @@ async function grantAccess(mac, hours = 1) {
     [normMac, String(timeout)]
   );
 
-  // 3. Fire-and-forget login trigger — tells MikroTik to re-check RADIUS NOW
-  //    MikroTik finds MAC in radcheck → Access-Accept → opens internet immediately
+  // 3. Fire-and-forget login trigger — tells MikroTik to re-check RADIUS NOW.
+  //    Fired from the Pi (192.168.88.2), NOT from the phone browser.
+  //    A short delay ensures the DB transaction is visible to FreeRADIUS
+  //    before MikroTik sends the RADIUS Access-Request.
   const loginUrl =
-    `http://${process.env.MIKROTIK_HOST || '192.168.88.1'}/login` +
+    `http://${MIKROTIK_HOST}/login` +
     `?username=${encodeURIComponent(normMac)}` +
     `&password=${encodeURIComponent(RADIUS_PASS)}`;
 
-  fetch(loginUrl).catch(err =>
-    console.warn(`⚠ RADIUS login trigger failed (non-fatal): ${err.message}`)
-  );
+  setTimeout(() => {
+    fetch(loginUrl).catch(err =>
+      console.warn(`⚠ RADIUS login trigger failed (non-fatal): ${err.message}`)
+    );
+  }, LOGIN_DELAY_MS);
 
   console.log(`✅ RADIUS: granted ${normMac} | hours=${hours} | timeout=${timeout}s`);
   return { ok: true, mock: false, mac: normMac };
@@ -136,10 +142,9 @@ async function listAuthorizedClients() {
  * Returns the MikroTik logout URL for a MAC — used by admin session revoke.
  */
 function buildLogoutUrl(mac) {
-  const host = process.env.MIKROTIK_HOST || '192.168.88.1';
-  const url  = mac
-    ? `http://${host}/logout?username=${encodeURIComponent(normalizeMac(mac))}`
-    : `http://${host}/logout`;
+  const url = mac
+    ? `http://${MIKROTIK_HOST}/logout?username=${encodeURIComponent(normalizeMac(mac))}`
+    : `http://${MIKROTIK_HOST}/logout`;
   return { url };
 }
 
