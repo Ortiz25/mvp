@@ -8,13 +8,15 @@
 #
 #  What it does:
 #    1.  Installs Node.js 20, nginx, PM2
-#    2.  Installs FreeRADIUS + MySQL + configures the radius database
-#    3.  Backend npm install + DB migration
-#    4.  Builds frontend and admin React apps
-#    5.  Installs nginx config
-#    6.  Creates backend/.env from example if not present
-#    7.  Patches ecosystem.config.cjs paths
-#    8.  Starts API with PM2 + registers autostart
+#    2.  Backend npm install + DB migration
+#    3.  Builds frontend and admin React apps
+#    4.  Installs nginx config
+#    5.  Creates backend/.env from example if not present
+#    6.  Patches ecosystem.config.cjs paths
+#    7.  Starts API with PM2 + registers autostart
+#
+#  NOTE: FreeRADIUS + MariaDB setup is done separately (already configured).
+#        See RADIUS_SETUP.md for manual steps.
 # =============================================================================
 set -euo pipefail
 
@@ -62,58 +64,7 @@ if ! command -v pm2 &>/dev/null; then
 fi
 ok "PM2 ready"
 
-# ── 2. FreeRADIUS + MySQL ────────────────────────────────────────────────
-header "FreeRADIUS + MySQL"
-
-if ! command -v freeradius &>/dev/null; then
-  info "Installing FreeRADIUS + MySQL…"
-  sudo apt-get install -y freeradius freeradius-mysql mysql-server >/dev/null 2>&1
-  ok "FreeRADIUS + MySQL installed"
-else
-  ok "FreeRADIUS already installed"
-fi
-
-# Load the RADIUS DB password from .env.example (or .env if it exists)
-ENV_FILE="$BASE/backend/.env"
-ENV_EXAMPLE="$BASE/backend/.env.example"
-RADIUS_PASS=$(grep RADIUS_DB_PASS "$ENV_FILE" 2>/dev/null || grep RADIUS_DB_PASS "$ENV_EXAMPLE") 
-RADIUS_PASS=$(echo "$RADIUS_PASS" | cut -d= -f2 | tr -d ' ')
-
-if [[ "$RADIUS_PASS" == "CHANGE_ME_radius_db_password" ]]; then
-  warn "RADIUS_DB_PASS is still the placeholder in .env.example"
-  warn "Edit backend/.env and set a real password, then re-run setup.sh"
-  warn "Skipping MySQL radius DB setup — do it manually per RADIUS_SETUP.md"
-else
-  info "Setting up radius MySQL database…"
-  sudo mysql -u root -e "
-    CREATE DATABASE IF NOT EXISTS radius;
-    CREATE USER IF NOT EXISTS 'radius'@'localhost' IDENTIFIED BY '${RADIUS_PASS}';
-    GRANT ALL PRIVILEGES ON radius.* TO 'radius'@'localhost';
-    FLUSH PRIVILEGES;
-  " 2>/dev/null || warn "MySQL setup skipped (may need sudo mysql_secure_installation first)"
-
-  # Import FreeRADIUS schema if tables don't exist yet
-  TABLE_COUNT=$(sudo mysql -u root -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='radius';" 2>/dev/null | tail -1 || echo "0")
-  if [[ "$TABLE_COUNT" -lt 4 ]]; then
-    sudo mysql -u root radius < /etc/freeradius/3.0/mods-config/sql/main/mysql/schema.sql 2>/dev/null && ok "radius schema imported" || warn "Schema import failed — import manually"
-  else
-    ok "radius schema already present ($TABLE_COUNT tables)"
-  fi
-
-  # Enable SQL module
-  if [[ ! -L /etc/freeradius/3.0/mods-enabled/sql ]]; then
-    sudo ln -s /etc/freeradius/3.0/mods-available/sql /etc/freeradius/3.0/mods-enabled/sql
-    ok "FreeRADIUS SQL module enabled"
-  fi
-
-  # Patch FreeRADIUS SQL module password
-  sudo sed -i "s/password = .*/password = \"${RADIUS_PASS}\"/" /etc/freeradius/3.0/mods-available/sql 2>/dev/null || true
-
-  sudo systemctl enable freeradius >/dev/null 2>&1
-  sudo systemctl restart freeradius && ok "FreeRADIUS started" || warn "FreeRADIUS failed to start — check: sudo freeradius -X"
-fi
-
-# ── 3. Directories ───────────────────────────────────────────────────────
+# ── 2. Directories ───────────────────────────────────────────────────────
 header "Directories"
 mkdir -p "$BASE"/{data,media,logs}
 sudo chown -R "$WHOAMI":"$WHOAMI" "$BASE"
@@ -124,7 +75,7 @@ while [[ "$_path" != "/" ]]; do
 done
 ok "Directories ready"
 
-# ── 4. Backend ───────────────────────────────────────────────────────────
+# ── 3. Backend ───────────────────────────────────────────────────────────
 header "Backend"
 cd "$BASE/backend"
 npm install --production --silent
@@ -132,7 +83,7 @@ ok "Backend deps installed (includes mysql2)"
 node src/db/migrate.js
 ok "SQLite DB migrated"
 
-# ── 5. Frontend ──────────────────────────────────────────────────────────
+# ── 4. Frontend ──────────────────────────────────────────────────────────
 header "Frontend"
 rm -f "$BASE/frontend/dist/index.html" 2>/dev/null || true
 cd "$BASE/frontend"
@@ -140,7 +91,7 @@ npm install --silent
 npm run build --silent
 ok "Frontend built"
 
-# ── 6. Admin ─────────────────────────────────────────────────────────────
+# ── 5. Admin ─────────────────────────────────────────────────────────────
 header "Admin"
 rm -f "$BASE/admin/dist/index.html" 2>/dev/null || true
 cd "$BASE/admin"
@@ -148,7 +99,7 @@ npm install --silent
 npm run build --silent
 ok "Admin built"
 
-# ── 7. nginx ─────────────────────────────────────────────────────────────
+# ── 6. nginx ─────────────────────────────────────────────────────────────
 header "nginx"
 sudo cp "$BASE/captive-portal.nginx" /etc/nginx/sites-available/captive-portal
 sudo sed -i "s|/home/admin/apps/mvp|$BASE|g" /etc/nginx/sites-available/captive-portal
@@ -157,24 +108,27 @@ sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
 ok "nginx configured"
 
-# ── 8. /etc/hosts ────────────────────────────────────────────────────────
+# ── 7. /etc/hosts ────────────────────────────────────────────────────────
+header "Hosts"
 grep -q "captive.local" /etc/hosts || echo "127.0.0.1  captive.local" | sudo tee -a /etc/hosts >/dev/null
 ok "/etc/hosts updated"
 
-# ── 9. .env ──────────────────────────────────────────────────────────────
+# ── 8. .env ──────────────────────────────────────────────────────────────
 header "Environment"
+ENV_FILE="$BASE/backend/.env"
+ENV_EXAMPLE="$BASE/backend/.env.example"
 if [[ ! -f "$ENV_FILE" ]]; then
   cp "$ENV_EXAMPLE" "$ENV_FILE"
   sed -i "s|/home/admin/apps/mvp|$BASE|g" "$ENV_FILE"
-  warn ".env created — EDIT IT:"
+  warn ".env created — EDIT IT before starting the API:"
   warn "  nano $ENV_FILE"
   warn "  → Set ADMIN_TOKEN"
-  warn "  → Set RADIUS_DB_PASS (same password used in MySQL setup above)"
+  warn "  → Set RADIUS_DB_PASS (must match MariaDB radius user password)"
 else
   ok ".env already exists"
 fi
 
-# ── 10. PM2 ──────────────────────────────────────────────────────────────
+# ── 9. PM2 ──────────────────────────────────────────────────────────────
 header "PM2"
 ECOS="$BASE/ecosystem.config.cjs"
 sed -i "s|cwd:.*'.*'|cwd:         '$BASE'|"                      "$ECOS"
@@ -205,8 +159,7 @@ echo -e "  Admin  : ${BLUE}http://$PI_IP:8090${NC}"
 echo -e "  API    : ${BLUE}http://$PI_IP:3000/health${NC}"
 echo ""
 echo -e "${YELLOW}${BOLD}  Next steps:${NC}"
-echo -e "  1. Complete FreeRADIUS config: ${YELLOW}nano RADIUS_SETUP.md${NC}"
-echo -e "  2. Set ADMIN_TOKEN + RADIUS_DB_PASS: ${YELLOW}nano $ENV_FILE${NC}"
-echo -e "  3. Add MikroTik RADIUS client: ${YELLOW}cat mikrotik/mikrotik-setup.rsc${NC}"
-echo -e "  4. Restart API: ${YELLOW}pm2 restart captive-api --update-env${NC}"
+echo -e "  1. Verify RADIUS is running : ${YELLOW}sudo systemctl status freeradius${NC}"
+echo -e "  2. Verify MariaDB is running: ${YELLOW}sudo systemctl status mariadb${NC}"
+echo -e "  3. Check API logs           : ${YELLOW}pm2 logs captive-api${NC}"
 echo ""

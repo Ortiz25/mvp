@@ -35,13 +35,12 @@ export function ConnectingPage() {
 
   const mac = hotspot.mac || status?.mac || null;
 
-  const loginUrl = mac
-    ? `http://${ROUTER_IP}/login` +
-      `?username=${encodeURIComponent(mac)}` +
-      `&password=${encodeURIComponent(RADIUS_PASS)}` +
-      `&dst=${encodeURIComponent(CONFIRM_DST)}`
-    : `http://${ROUTER_IP}/login`;
+  // Replace your loginUrl construction with this:
+const dst = 'http://neverssl.com';
 
+const loginUrl = mac
+  ? `http://192.168.88.1/login?username=${encodeURIComponent(mac)}&password=${encodeURIComponent(PASS)}&dst=${encodeURIComponent(dst)}`
+  : dst;
   function goNow() {
     window.location.href = loginUrl;
   }
