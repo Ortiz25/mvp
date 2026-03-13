@@ -18,7 +18,7 @@ export function ConnectingPage() {
     // Step 1 — fire-and-forget fetch to MikroTik login servlet
     // This tells MikroTik to mark the session active immediately.
     // We do NOT navigate here — just fetch silently in background.
-    const loginUrl = `http://${ROUTER_IP}/login?username=${encodeURIComponent(mac)}&password=${encodeURIComponent(mac)}`;
+    const loginUrl = `http://${ROUTER_IP}/login?username=${encodeURIComponent(mac)}&password=${encodeURIComponent("password")}`;
     fetch(loginUrl).catch(() => {});
 
     // Step 2 — countdown then navigate to plain HTTP site
@@ -40,7 +40,7 @@ export function ConnectingPage() {
 
   function goNow() {
     fetch(
-      `http://${ROUTER_IP}/login?username=${encodeURIComponent(mac)}&password=${encodeURIComponent(mac)}`
+      `http://${ROUTER_IP}/login?username=${encodeURIComponent(mac)}&password=${encodeURIComponent("password")}`
     ).catch(() => {});
     setTimeout(() => {
       window.location.replace(FINAL_URL);
