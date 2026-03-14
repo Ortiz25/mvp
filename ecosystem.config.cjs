@@ -1,11 +1,10 @@
-// ecosystem.config.cjs — PM2 process config (RADIUS edition)
-// setup.sh patches cwd, DB_PATH, MEDIA_DIR at install time.
+// ecosystem.config.cjs — PM2 process config (Pi-as-router edition)
 
 module.exports = {
   apps: [{
     name:        'captive-api',
     script:      './backend/src/index.js',
-    cwd:         '/home/admin/apps/mvp',          // patched by setup.sh
+    cwd:         '/home/admin/apps/captive-portal',   // patched by setup.sh
     instances:   1,
     exec_mode:   'fork',
     autorestart: true,
@@ -13,24 +12,24 @@ module.exports = {
     max_memory_restart: '256M',
 
     env: {
-      NODE_ENV:         'production',
-      PORT:             3000,
+      NODE_ENV:  'production',
+      PORT:      3000,
 
       // Paths (patched by setup.sh at install time)
-      DB_PATH:   '/home/admin/apps/mvp/data/captive.db',
-      MEDIA_DIR: '/home/admin/apps/mvp/media',
+      DB_PATH:   '/home/admin/apps/captive-portal/data/captive.db',
+      MEDIA_DIR: '/home/admin/apps/captive-portal/media',
 
-      // CORS
-      CORS_ORIGINS: 'http://captive.local,http://192.168.88.2',
+      // CORS — Pi LAN IP
+      CORS_ORIGINS: 'http://captive.local,http://192.168.100.1',
 
-      // MikroTik LAN IP (no API credentials needed with RADIUS)
-      MIKROTIK_HOST: '192.168.88.1',
+      // LAN interface — used for iptables MAC rules
+      LAN_IFACE: 'eth1',
 
-      // RADIUS DB — ADMIN_TOKEN and RADIUS_DB_PASS loaded from backend/.env
+      // RADIUS_DB_PASS and ADMIN_TOKEN loaded from backend/.env
     },
 
-    error_file:      '/home/admin/apps/mvp/logs/error.log',   // patched
-    out_file:        '/home/admin/apps/mvp/logs/out.log',      // patched
+    error_file:      '/home/admin/apps/captive-portal/logs/error.log',
+    out_file:        '/home/admin/apps/captive-portal/logs/out.log',
     log_date_format: 'YYYY-MM-DD HH:mm:ss',
     merge_logs:      true,
   }],

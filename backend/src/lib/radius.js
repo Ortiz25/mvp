@@ -1,22 +1,29 @@
 'use strict';
 /**
- * radius.js — RADIUS grant/revoke via MySQL (replaces mikrotik.js)
+ * radius.js — RADIUS grant/revoke via MySQL + iptables (Pi-as-router edition)
  *
  * How it works:
- *   1. INSERT into radcheck  → tells FreeRADIUS this MAC is authorised
+ *   1. INSERT into radcheck  → records MAC authorisation in FreeRADIUS DB
  *   2. INSERT into radreply  → sets Session-Timeout for the MAC
- *   3. Fire-and-forget GET to http://192.168.88.1/login?username=MAC&password=password
- *      → MikroTik re-checks RADIUS immediately and opens internet for this client
- *      → We do NOT await this — if it fails, RADIUS auth fires on the next packet (~1s)
+ *   3. `iptables -I authorized_clients` → immediately opens firewall for this MAC
  *
- * MAC format MUST match radius-mac-format on MikroTik hotspot profile.
- * Set:  /ip hotspot profile set hsprof1 radius-mac-format=XX:XX:XX:XX:XX:XX
- * This means uppercase, colon-separated (e.g. 8E:5A:E7:2C:58:52).
+ * NO MikroTik login URL call — Pi controls forwarding directly via iptables.
+ * ipset is NOT used (ip_set_hash_mac kernel module missing on RPi custom kernel).
+ * Instead, each MAC gets its own rule in the `authorized_clients` iptables chain.
+ *
+ * Prerequisites on the Pi:
+ *   sudo iptables -N authorized_clients
+ *   sudo iptables -A FORWARD -i eth1 -o eth0 -j authorized_clients
+ *   sudo visudo → add:  admin ALL=(ALL) NOPASSWD: /sbin/iptables
  */
 
-const mysql = require('mysql2/promise');
+const mysql    = require('mysql2/promise');
+const { exec } = require('child_process');
+const util     = require('util');
+const execAsync = util.promisify(exec);
 
-// Normalise any MAC format to UPPERCASE COLON-SEPARATED
+// ── MAC helpers ───────────────────────────────────────────────────────────
+
 function normalizeMac(mac) {
   if (!mac) throw new Error('MAC address required');
   const hex = mac.toUpperCase().replace(/[^A-F0-9]/g, '');
@@ -24,16 +31,17 @@ function normalizeMac(mac) {
   return hex.match(/.{2}/g).join(':');
 }
 
-// Connection pool — created lazily on first use
+// ── MySQL pool ────────────────────────────────────────────────────────────
+
 let _pool = null;
 function pool() {
   if (!_pool) {
     _pool = mysql.createPool({
-      host:     process.env.RADIUS_DB_HOST || 'localhost',
-      user:     process.env.RADIUS_DB_USER || 'radius',
-      password: process.env.RADIUS_DB_PASS,
-      database: 'radius',
-      port:     parseInt(process.env.RADIUS_DB_PORT || '3306'),
+      host:               process.env.RADIUS_DB_HOST || 'localhost',
+      user:               process.env.RADIUS_DB_USER || 'radius',
+      password:           process.env.RADIUS_DB_PASS,
+      database:           'radius',
+      port:               parseInt(process.env.RADIUS_DB_PORT || '3306'),
       waitForConnections: true,
       connectionLimit:    10,
       queueLimit:         0,
@@ -42,28 +50,58 @@ function pool() {
   return _pool;
 }
 
-const MIKROTIK_HOST  = process.env.MIKROTIK_HOST || '192.168.88.1';
-const RADIUS_PASS    = 'password'; // Static shared secret — not user-facing
-const LOGIN_DELAY_MS = 300;        // Give FreeRADIUS time to commit before MikroTik re-checks
+// ── iptables helpers ──────────────────────────────────────────────────────
 
-/**
- * grantAccess(mac, hours)
- * Adds the MAC to FreeRADIUS and fires the MikroTik login trigger.
- */
+const LAN_IFACE = process.env.LAN_IFACE || 'eth1';
+
+async function iptablesAdd(mac) {
+  try {
+    await execAsync(
+      `sudo iptables -I authorized_clients 1 -m mac --mac-source ${mac} -j ACCEPT`
+    );
+  } catch (err) {
+    console.warn(`⚠ iptables FORWARD add (non-fatal): ${err.message}`);
+  }
+  try {
+    await execAsync(
+      `sudo iptables -t nat -I PREROUTING 1 -i ${LAN_IFACE} -m mac --mac-source ${mac} -j RETURN`
+    );
+  } catch (err) {
+    console.warn(`⚠ iptables NAT add (non-fatal): ${err.message}`);
+  }
+}
+
+async function iptablesDel(mac) {
+  try {
+    await execAsync(
+      `sudo iptables -D authorized_clients -m mac --mac-source ${mac} -j ACCEPT`
+    );
+  } catch (err) {
+    console.warn(`⚠ iptables FORWARD del (non-fatal): ${err.message}`);
+  }
+  try {
+    await execAsync(
+      `sudo iptables -t nat -D PREROUTING -i ${LAN_IFACE} -m mac --mac-source ${mac} -j RETURN`
+    );
+  } catch (err) {
+    console.warn(`⚠ iptables NAT del (non-fatal): ${err.message}`);
+  }
+}
+
+// ── Public API ────────────────────────────────────────────────────────────
+
 async function grantAccess(mac, hours = 1) {
   const normMac = normalizeMac(mac);
   const timeout = hours * 3600;
   const db = pool();
 
-  // 1. radcheck — upsert Cleartext-Password
   await db.execute(
     `INSERT INTO radcheck (username, attribute, op, value)
-       VALUES (?, 'Cleartext-Password', ':=', ?)
+       VALUES (?, 'Auth-Type', ':=', 'Accept')
      ON DUPLICATE KEY UPDATE value = VALUES(value)`,
-    [normMac, RADIUS_PASS]
+    [normMac]
   );
 
-  // 2. radreply — upsert Session-Timeout
   await db.execute(
     `INSERT INTO radreply (username, attribute, op, value)
        VALUES (?, 'Session-Timeout', ':=', ?)
@@ -71,42 +109,27 @@ async function grantAccess(mac, hours = 1) {
     [normMac, String(timeout)]
   );
 
-  // 3. Fire-and-forget login trigger — tells MikroTik to re-check RADIUS NOW.
-  //    Fired from the Pi (192.168.88.2), NOT from the phone browser.
-  //    A short delay ensures the DB transaction is visible to FreeRADIUS
-  //    before MikroTik sends the RADIUS Access-Request.
-  const loginUrl =
-    `http://${MIKROTIK_HOST}/login` +
-    `?username=${encodeURIComponent(normMac)}` +
-    `&password=${encodeURIComponent(RADIUS_PASS)}`;
+  await iptablesAdd(normMac);
 
-  setTimeout(() => {
-    fetch(loginUrl).catch(err =>
-      console.warn(`⚠ RADIUS login trigger failed (non-fatal): ${err.message}`)
-    );
-  }, LOGIN_DELAY_MS);
+  setTimeout(() => revokeAccess(normMac), timeout * 1000);
 
-  console.log(`✅ RADIUS: granted ${normMac} | hours=${hours} | timeout=${timeout}s`);
+  console.log(`✅ Access granted: ${normMac} | hours=${hours}`);
   return { ok: true, mock: false, mac: normMac };
 }
 
-/**
- * revokeAccess(mac)
- * Removes the MAC from FreeRADIUS — MikroTik drops the session on next accounting.
- */
 async function revokeAccess(mac) {
   const normMac = normalizeMac(mac);
   const db = pool();
+
   await db.execute('DELETE FROM radcheck WHERE username = ?', [normMac]);
   await db.execute('DELETE FROM radreply  WHERE username = ?', [normMac]);
-  console.log(`🗑 RADIUS: revoked ${normMac}`);
+
+  await iptablesDel(normMac);
+
+  console.log(`🗑 Access revoked: ${normMac}`);
   return { ok: true };
 }
 
-/**
- * testConnection()
- * Used by admin route /api/admin/radius/status
- */
 async function testConnection() {
   try {
     const db = pool();
@@ -117,10 +140,6 @@ async function testConnection() {
   }
 }
 
-/**
- * listAuthorizedClients()
- * Returns MACs currently in radcheck — used by admin stats.
- */
 async function listAuthorizedClients() {
   try {
     const db = pool();
@@ -129,7 +148,7 @@ async function listAuthorizedClients() {
        FROM radcheck r
        LEFT JOIN radreply reply
          ON reply.username = r.username AND reply.attribute = 'Session-Timeout'
-       WHERE r.attribute = 'Cleartext-Password'`
+       WHERE r.attribute = 'Auth-Type'`
     );
     return rows;
   } catch {
@@ -137,15 +156,15 @@ async function listAuthorizedClients() {
   }
 }
 
-/**
- * buildLogoutUrl(mac)
- * Returns the MikroTik logout URL for a MAC — used by admin session revoke.
- */
 function buildLogoutUrl(mac) {
-  const url = mac
-    ? `http://${MIKROTIK_HOST}/logout?username=${encodeURIComponent(normalizeMac(mac))}`
-    : `http://${MIKROTIK_HOST}/logout`;
-  return { url };
+  return { url: null, note: 'Revoke via iptables — call revokeAccess(mac) directly' };
 }
 
-module.exports = { grantAccess, revokeAccess, testConnection, listAuthorizedClients, buildLogoutUrl, normalizeMac };
+module.exports = {
+  grantAccess,
+  revokeAccess,
+  testConnection,
+  listAuthorizedClients,
+  buildLogoutUrl,
+  normalizeMac,
+};

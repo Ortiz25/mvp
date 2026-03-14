@@ -1,5 +1,7 @@
 # /etc/nginx/sites-available/captive-portal
 #
+# Pi-as-router edition — Pi LAN IP is 192.168.100.1
+#
 # Install:
 #   sudo cp captive-portal.nginx /etc/nginx/sites-available/captive-portal
 #   sudo ln -sf /etc/nginx/sites-available/captive-portal /etc/nginx/sites-enabled/captive-portal
@@ -10,50 +12,34 @@
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
-    server_name captive.local 192.168.88.2 _;
+    server_name captive.local 192.168.100.1 _;
 
     client_max_body_size 512M;
     proxy_read_timeout   120s;
 
     # ── Captive portal OS detection endpoints ─────────────────────────────
     #
-    # CRITICAL BEHAVIOUR CHANGE based on client auth state:
+    # We return 200 (not 204) for connectivity probes PRE-AUTH.
+    # This keeps the captive portal WebView open so the user completes
+    # the video/survey flow before getting internet access.
     #
-    # PRE-AUTH (client not in hotspot active list):
-    #   MikroTik intercepts the /generate_204 request at the network layer
-    #   and redirects it to captive.local. So this nginx block handles it.
-    #   We return 204 — the OS sees "internet works" and dismisses the
-    #   captive portal WebView automatically. BUT MikroTik still blocks
-    #   real traffic until the MAC is in /ip/hotspot/user.
-    #   
-    #   Wait — actually we want the OS to SHOW the captive portal WebView
-    #   so the user can complete the video/survey flow. So for /generate_204
-    #   we should return 200 (not 204) to make the OS keep the WebView open.
-    #
-    # POST-AUTH (MAC added to /ip/hotspot/user by our backend):
-    #   MikroTik no longer intercepts — the request goes directly to google.
-    #   Google returns 204 from connectivitycheck.gstatic.com/generate_204.
-    #   OS detects internet and dismisses WebView. ✓
-    #
-    # SOLUTION: Return 200 (not 204) from our portal for connectivity checks.
-    # This keeps the captive portal WebView open pre-auth.
-    # Post-auth, the real internet serves 204 from google's servers directly.
+    # POST-auth: iptables allows the client through, so real internet
+    # serves the actual 204 from connectivitycheck.gstatic.com directly.
     #
     location = /generate_204         { return 200; }
     location = /gen_204              { return 200; }
 
-    # Windows NCSI — return proper response to keep "No internet" indicator
-    # showing until real internet is available
-    location = /connecttest.txt      {
+    # Windows NCSI
+    location = /connecttest.txt {
         add_header Content-Type text/plain;
         return 200 "Microsoft NCSI";
     }
-    location = /ncsi.txt             {
+    location = /ncsi.txt {
         add_header Content-Type text/plain;
         return 200 "Microsoft NCSI";
     }
     location = /canonical.html       { return 302 http://captive.local/; }
-    location = /success.txt          {
+    location = /success.txt {
         add_header Content-Type text/plain;
         return 200 "success";
     }
@@ -88,7 +74,7 @@ server {
 
     # ── Fingerprinted static assets ───────────────────────────────────────
     location ~* \.(js|css|woff2?|png|jpg|svg|ico)$ {
-        root       /home/admin/apps/mvp/frontend/dist;
+        root       /home/admin/apps/captive-portal/frontend/dist;
         try_files  $uri =404;
         add_header Cache-Control "public, max-age=31536000, immutable";
         access_log off;
@@ -96,7 +82,7 @@ server {
 
     # ── React SPA ─────────────────────────────────────────────────────────
     location / {
-        root       /home/admin/apps/mvp/frontend/dist;
+        root       /home/admin/apps/captive-portal/frontend/dist;
         try_files  $uri $uri/ /index.html;
         add_header Cache-Control "no-cache, no-store, must-revalidate";
         add_header Pragma        "no-cache";
@@ -109,10 +95,9 @@ server {
     listen 8090;
     server_name _;
 
+    # Allow only from LAN and Pi localhost
     allow 127.0.0.1;
-    allow 192.168.88.0/24;
-    allow 192.168.1.0/24;
-    allow 192.168.8.0/24;
+    allow 192.168.100.0/24;
     deny  all;
 
     client_max_body_size 512M;
@@ -129,29 +114,14 @@ server {
     location /uploads/ { proxy_pass http://127.0.0.1:3000; }
 
     location ~* \.(js|css|woff2?|png|jpg|svg|ico)$ {
-        root       /home/admin/apps/mvp/admin/dist;
+        root       /home/admin/apps/captive-portal/admin/dist;
         try_files  $uri =404;
         add_header Cache-Control "public, max-age=31536000, immutable";
         access_log off;
     }
 
     location / {
-        root      /home/admin/apps/mvp/admin/dist;
+        root      /home/admin/apps/captive-portal/admin/dist;
         try_files $uri $uri/ /index.html;
-    }
-}
-
-# ── Kolibri ───────────────────────────────────────────────────────────────
-server {
-    listen 80;
-    server_name kolibri.local;
-
-    location / {
-        proxy_pass         http://127.0.0.1:8080;
-        proxy_http_version 1.1;
-        proxy_set_header   Host      $host;
-        proxy_set_header   X-Real-IP $remote_addr;
-        proxy_read_timeout 120s;
-        client_max_body_size 100M;
     }
 }

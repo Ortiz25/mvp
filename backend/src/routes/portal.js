@@ -1,19 +1,24 @@
 'use strict';
 /**
- * Portal routes — RADIUS edition
+ * portal.js — Pi-as-router edition
  *
  * Grant flow:
  *   1. Frontend POST /api/:slug/access/grant { sessionId }
  *   2. Backend → radius.grantAccess(mac, hours)
- *        a. INSERT into radcheck (MAC, Cleartext-Password=password)
- *        b. INSERT into radreply (MAC, Session-Timeout=seconds)
- *        c. Fire-and-forget GET http://192.168.88.1/login?username=MAC&password=password
+ *        a. INSERT into radcheck (Auth-Type = Accept)
+ *        b. INSERT into radreply (Session-Timeout = seconds)
+ *        c. iptables -I authorized_clients — opens firewall immediately
  *   3. Frontend navigates to /connecting
- *   4. ConnectingPage navigates to http://neverssl.com (plain HTTP)
+ *   4. ConnectingPage navigates to http://neverssl.com
  *   5. OS connectivity check passes → captive portal WebView dismissed
+ *
+ * MAC resolution order:
+ *   1. ?mac= or ?username= query param (MikroTik hotspot substitution)
+ *   2. Pi ARP table lookup by client IP (arp -n <ip>)
  */
 const express = require('express');
 const router  = express.Router();
+const { exec } = require('child_process');
 
 const { grantAccess } = require('../lib/radius');
 const { getAllCampaigns, getCampaignBySlug, getCampaignConfig } = require('../lib/campaigns');
@@ -22,14 +27,12 @@ const {
   markVideoWatched, markSurveyDone, markAccessGranted,
 } = require('../lib/sessions');
 
-// Sentinel values that must never be stored or re-used as a dst URL
+// Sentinel values that must never be used as redirect destinations
 const DST_SENTINELS = [
-  'captive.local', '192.168.88.1', '192.168.88.2',
+  'captive.local', '192.168.100.1', '192.168.88.1', '192.168.88.2',
   '/gen_204', '/generate_204', '/connecttest', '/ncsi',
   '/hotspot-detect', '/canonical.html', 'hotspot/login', '/login',
-  'neverssl.com',   // our redirect-confirm target
-  'example.com',    // old redirect-confirm target
-  'google.com',     // google 301→HTTPS, causes loop
+  'neverssl.com', 'example.com', 'google.com',
 ];
 
 function sanitizeDst(raw) {
@@ -52,39 +55,28 @@ function getClientIp(req) {
 
 /**
  * getMacFromArp(ip)
- * Looks up a client MAC by IP from MikroTik's ARP table via REST API.
- * Used when the portal opens without a ?mac= param — OS probe requests
- * hit captive.local directly without going through login.html substitution.
- * Returns null on any failure — always non-fatal.
+ * Looks up client MAC from the Pi's ARP table using `arp -n <ip>`.
+ * This works because the Pi is the router — all client traffic passes through it.
+ * Returns null on any failure (always non-fatal).
  */
-async function getMacFromArp(ip) {
-  try {
-    const host = process.env.MIKROTIK_HOST     || '192.168.88.1';
-    const user = process.env.MIKROTIK_API_USER || 'admin';
-    const pass = process.env.MIKROTIK_API_PASS || 'm0t0m0t0';
+function getMacFromArp(ip) {
+  return new Promise((resolve) => {
+    if (!ip || ip === '127.0.0.1' || ip === '::1') return resolve(null);
 
-    const url  = `http://${host}/rest/ip/arp?address=${encodeURIComponent(ip)}`;
-    const resp = await fetch(url, {
-      headers: {
-        'Authorization': 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64'),
-      },
-      signal: AbortSignal.timeout(2000),
+    exec(`arp -n ${ip}`, (err, stdout) => {
+      if (err) return resolve(null);
+      // arp -n output: "192.168.100.50 ether aa:bb:cc:dd:ee:ff C eth1"
+      const match = stdout.match(/([0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2})/i);
+      if (match) {
+        console.log(`[ARP] Resolved ${ip} → ${match[1]}`);
+        return resolve(match[1]);
+      }
+      resolve(null);
     });
-
-    if (!resp.ok) return null;
-
-    const data  = await resp.json();
-    const entry = Array.isArray(data) ? data[0] : null;
-    const mac   = entry?.['mac-address'] || null;
-
-    if (mac) console.log(`[ARP] Resolved ${ip} → ${mac}`);
-    return mac;
-  } catch {
-    return null;
-  }
+  });
 }
 
-// ── GET /api/campaigns ────────────────────────────────────────────────────
+// ── GET /api/campaigns ─────────────────────────────────────────────────────
 router.get('/campaigns', (_req, res) => {
   const campaigns = getAllCampaigns(false).map(c => ({
     id:                 c.id,
@@ -100,7 +92,17 @@ router.get('/campaigns', (_req, res) => {
   res.json({ campaigns });
 });
 
-// ── GET /api/:slug/status ─────────────────────────────────────────────────
+// ── GET /api/client-mac ────────────────────────────────────────────────────
+// Called by the React frontend on load to discover its own MAC address.
+router.get('/client-mac', async (req, res) => {
+  const ip = getClientIp(req);
+  if (!ip) return res.status(400).json({ error: 'Cannot determine client IP' });
+  const mac = await getMacFromArp(ip);
+  if (!mac) return res.status(404).json({ error: 'MAC not found in ARP table — reconnect to Wi-Fi and try again' });
+  res.json({ mac, ip });
+});
+
+// ── GET /api/:slug/status ──────────────────────────────────────────────────
 router.get('/:slug/status', async (req, res) => {
   const c = getCampaignBySlug(req.params.slug);
   if (!c) return res.status(404).json({ error: 'Campaign not found' });
@@ -109,13 +111,9 @@ router.get('/:slug/status', async (req, res) => {
   let   mac = req.query.mac || req.query.username || null;
   const dst = sanitizeDst(req.query.dst || req.query['link-orig'] || null);
 
-  // No MAC in URL — try to resolve from MikroTik ARP table using client IP.
-  // This handles OS probe requests where login.html redirects without params.
-  if (!mac && ip) {
-    mac = await getMacFromArp(ip);
-  }
+  if (!mac && ip) mac = await getMacFromArp(ip);
 
-  console.log(`[STATUS] slug=${req.params.slug} ip=${ip} mac=${mac} dst=${dst} raw_dst=${req.query.dst||null}`);
+  console.log(`[STATUS] slug=${req.params.slug} ip=${ip} mac=${mac} dst=${dst}`);
 
   const session = getOrCreateSession(ip, c.id, mac, dst);
 
@@ -134,7 +132,7 @@ router.get('/:slug/status', async (req, res) => {
   });
 });
 
-// ── GET /api/:slug/config ─────────────────────────────────────────────────
+// ── GET /api/:slug/config ──────────────────────────────────────────────────
 router.get('/:slug/config', (req, res) => {
   const cfg = getCampaignConfig(req.params.slug);
   if (!cfg) return res.status(404).json({ error: 'Campaign not found or inactive' });
@@ -160,7 +158,7 @@ router.get('/:slug/config', (req, res) => {
   });
 });
 
-// ── POST /api/:slug/video/complete ────────────────────────────────────────
+// ── POST /api/:slug/video/complete ─────────────────────────────────────────
 router.post('/:slug/video/complete', (req, res) => {
   const { sessionId, watchedPct } = req.body;
   if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
@@ -174,7 +172,7 @@ router.post('/:slug/video/complete', (req, res) => {
   res.json({ success: true });
 });
 
-// ── POST /api/:slug/survey/submit ─────────────────────────────────────────
+// ── POST /api/:slug/survey/submit ──────────────────────────────────────────
 router.post('/:slug/survey/submit', (req, res) => {
   const { sessionId, answers } = req.body;
   if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
@@ -186,7 +184,7 @@ router.post('/:slug/survey/submit', (req, res) => {
   res.json({ success: true });
 });
 
-// ── POST /api/:slug/access/grant ──────────────────────────────────────────
+// ── POST /api/:slug/access/grant ───────────────────────────────────────────
 router.post('/:slug/access/grant', async (req, res) => {
   const { sessionId } = req.body;
   if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
@@ -202,17 +200,16 @@ router.post('/:slug/access/grant', async (req, res) => {
   let   mac   = session.mac_address;
   const hours = c.session_hours || 1;
 
-  // Last-chance MAC resolution — if session was created without a MAC
-  // (portal opened via OS probe), try ARP lookup now before granting.
+  // Last-chance MAC resolution via Pi ARP table
   if (!mac) {
     const ip = getClientIp(req);
     if (ip) mac = await getMacFromArp(ip);
   }
 
   if (!mac) {
-    console.error('⚠ Grant failed: no MAC address for session', sessionId);
+    console.error('⚠ Grant failed: no MAC for session', sessionId);
     return res.status(400).json({
-      error: 'Cannot grant access: MAC address unknown. Please reconnect to the WiFi and try again.',
+      error: 'Cannot grant access: MAC address unknown. Please reconnect to Wi-Fi and try again.',
     });
   }
 
@@ -220,14 +217,10 @@ router.post('/:slug/access/grant', async (req, res) => {
 
   const result = await grantAccess(mac, hours);
 
-  if (!result.ok) {
-    console.error(`⚠ RADIUS grant failed: ${result.error}`);
-  }
-
   markAccessGranted(sessionId, hours);
   const expiresAt = new Date(Date.now() + hours * 3600000).toISOString();
 
-  console.log(`🌐 Access granted: mac=${mac} campaign=${c.slug} hours=${hours} ok=${result.ok}`);
+  console.log(`🌐 Access granted: mac=${mac} ok=${result.ok}`);
 
   res.json({
     success:  true,

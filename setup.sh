@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  CityNet Captive Portal — RADIUS Edition — Raspberry Pi Setup
+#  CityNet Captive Portal — Pi-as-router edition — Setup Script
 #
 #  Usage:
-#    cd /home/admin/apps/mvp
+#    cd /home/admin/apps/captive-portal
 #    bash setup.sh
 #
 #  What it does:
-#    1.  Installs Node.js 20, nginx, PM2
-#    2.  Backend npm install + DB migration
-#    3.  Builds frontend and admin React apps
-#    4.  Installs nginx config
-#    5.  Creates backend/.env from example if not present
-#    6.  Patches ecosystem.config.cjs paths
-#    7.  Starts API with PM2 + registers autostart
+#    1. Installs Node.js 20, nginx, PM2
+#    2. Backend npm install + DB migration
+#    3. Builds frontend and admin React apps
+#    4. Installs nginx config
+#    5. Creates backend/.env from .env.example if not present
+#    6. Patches ecosystem.config.cjs with correct paths
+#    7. Starts API with PM2 + registers autostart
 #
-#  NOTE: FreeRADIUS + MariaDB setup is done separately (already configured).
-#        See RADIUS_SETUP.md for manual steps.
+#  NOTE: FreeRADIUS + MariaDB + iptables setup done separately.
+#        See DEPLOYMENT.md for full steps.
 # =============================================================================
 set -euo pipefail
 
@@ -31,10 +31,9 @@ header() { echo -e "\n${BOLD}${BLUE}── $* ──${NC}"; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE="$SCRIPT_DIR"
 WHOAMI="$(whoami)"
-HOME_DIR="$(eval echo ~$WHOAMI)"
 
 echo ""
-echo -e "${BOLD}CityNet Captive Portal — RADIUS Edition Setup${NC}"
+echo -e "${BOLD}CityNet Captive Portal — Pi-as-router edition${NC}"
 echo -e "  Base : ${BLUE}$BASE${NC}"
 echo -e "  User : ${BLUE}$WHOAMI${NC}"
 echo ""
@@ -66,100 +65,82 @@ ok "PM2 ready"
 
 # ── 2. Directories ───────────────────────────────────────────────────────
 header "Directories"
-mkdir -p "$BASE"/{data,media,logs}
+mkdir -p "$BASE"/{data,media,logs,frontend/dist,admin/dist}
 sudo chown -R "$WHOAMI":"$WHOAMI" "$BASE"
-_path="$BASE"
-while [[ "$_path" != "/" ]]; do
-  sudo chmod o+x "$_path" 2>/dev/null || true
-  _path="$(dirname "$_path")"
-done
 ok "Directories ready"
 
 # ── 3. Backend ───────────────────────────────────────────────────────────
 header "Backend"
 cd "$BASE/backend"
-npm install --production --silent
-ok "Backend deps installed (includes mysql2)"
+npm install --omit=dev 2>&1 | tail -3
+ok "Backend deps installed"
+
+if [[ ! -f "$BASE/backend/.env" ]]; then
+  cp "$BASE/backend/.env.example" "$BASE/backend/.env"
+  warn "Created backend/.env from .env.example — EDIT IT before starting!"
+  warn "  nano $BASE/backend/.env"
+else
+  ok "backend/.env already exists"
+fi
+
 node src/db/migrate.js
-ok "SQLite DB migrated"
+ok "DB migrated"
 
 # ── 4. Frontend ──────────────────────────────────────────────────────────
-header "Frontend"
-rm -f "$BASE/frontend/dist/index.html" 2>/dev/null || true
+header "Frontend (React portal)"
 cd "$BASE/frontend"
-npm install --silent
-npm run build --silent
-ok "Frontend built"
+npm install 2>&1 | tail -3
+npm run build 2>&1 | tail -5
+ok "Frontend built → frontend/dist"
 
 # ── 5. Admin ─────────────────────────────────────────────────────────────
-header "Admin"
-rm -f "$BASE/admin/dist/index.html" 2>/dev/null || true
+header "Admin panel"
 cd "$BASE/admin"
-npm install --silent
-npm run build --silent
-ok "Admin built"
+npm install 2>&1 | tail -3
+npm run build 2>&1 | tail -5
+ok "Admin built → admin/dist"
 
 # ── 6. nginx ─────────────────────────────────────────────────────────────
 header "nginx"
-sudo cp "$BASE/captive-portal.nginx" /etc/nginx/sites-available/captive-portal
-sudo sed -i "s|/home/admin/apps/mvp|$BASE|g" /etc/nginx/sites-available/captive-portal
-sudo ln -sf /etc/nginx/sites-available/captive-portal /etc/nginx/sites-enabled/captive-portal
+# Patch frontend/admin dist paths in nginx config
+NGINX_CONF="/etc/nginx/sites-available/captive-portal"
+sudo cp "$BASE/captive-portal.nginx" "$NGINX_CONF"
+sudo sed -i "s|/home/admin/apps/captive-portal|$BASE|g" "$NGINX_CONF"
+sudo ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/captive-portal
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
-ok "nginx configured"
+ok "nginx configured and reloaded"
 
-# ── 7. /etc/hosts ────────────────────────────────────────────────────────
-header "Hosts"
-grep -q "captive.local" /etc/hosts || echo "127.0.0.1  captive.local" | sudo tee -a /etc/hosts >/dev/null
-ok "/etc/hosts updated"
+# ── 7. ecosystem.config.cjs — patch paths ────────────────────────────────
+header "PM2 ecosystem"
+sed -i "s|/home/admin/apps/captive-portal|$BASE|g" "$BASE/ecosystem.config.cjs"
+ok "ecosystem.config.cjs paths patched to $BASE"
 
-# ── 8. .env ──────────────────────────────────────────────────────────────
-header "Environment"
-ENV_FILE="$BASE/backend/.env"
-ENV_EXAMPLE="$BASE/backend/.env.example"
-if [[ ! -f "$ENV_FILE" ]]; then
-  cp "$ENV_EXAMPLE" "$ENV_FILE"
-  sed -i "s|/home/admin/apps/mvp|$BASE|g" "$ENV_FILE"
-  warn ".env created — EDIT IT before starting the API:"
-  warn "  nano $ENV_FILE"
-  warn "  → Set ADMIN_TOKEN"
-  warn "  → Set RADIUS_DB_PASS (must match MariaDB radius user password)"
-else
-  ok ".env already exists"
-fi
-
-# ── 9. PM2 ──────────────────────────────────────────────────────────────
+# ── 8. PM2 ───────────────────────────────────────────────────────────────
 header "PM2"
-ECOS="$BASE/ecosystem.config.cjs"
-sed -i "s|cwd:.*'.*'|cwd:         '$BASE'|"                      "$ECOS"
-sed -i "s|DB_PATH:.*'.*'|DB_PATH:   '$BASE/data/captive.db'|"    "$ECOS"
-sed -i "s|MEDIA_DIR:.*'.*'|MEDIA_DIR: '$BASE/media'|"            "$ECOS"
-sed -i "s|error_file:.*'.*'|error_file: '$BASE/logs/error.log'|" "$ECOS"
-sed -i "s|out_file:.*'.*'|out_file:   '$BASE/logs/out.log'|"     "$ECOS"
-
 cd "$BASE"
 pm2 delete captive-api 2>/dev/null || true
 pm2 start ecosystem.config.cjs
 pm2 save
+ok "PM2 started captive-api"
 
-STARTUP_CMD=$(pm2 startup systemd -u "$WHOAMI" --hp "$HOME_DIR" 2>&1 | grep "sudo env" | head -1)
-if [[ -n "$STARTUP_CMD" ]]; then
-  eval "$STARTUP_CMD"
-  ok "PM2 startup registered"
+PM2_STARTUP=$(pm2 startup 2>&1 | grep "sudo env" || true)
+if [[ -n "$PM2_STARTUP" ]]; then
+  warn "Run this command to enable PM2 on boot:"
+  echo -e "  ${YELLOW}${PM2_STARTUP}${NC}"
 fi
 
-PI_IP=$(hostname -I | awk '{print $1}')
+# ── Done ─────────────────────────────────────────────────────────────────
 echo ""
-echo -e "${GREEN}${BOLD}══════════════════════════════════════════════════════${NC}"
-echo -e "${GREEN}${BOLD}  ✅  Setup complete!${NC}"
-echo -e "${GREEN}${BOLD}══════════════════════════════════════════════════════${NC}"
+echo -e "${GREEN}${BOLD}Setup complete!${NC}"
 echo ""
-echo -e "  Portal : ${BLUE}http://captive.local${NC}  or  ${BLUE}http://$PI_IP${NC}"
-echo -e "  Admin  : ${BLUE}http://$PI_IP:8090${NC}"
-echo -e "  API    : ${BLUE}http://$PI_IP:3000/health${NC}"
+echo -e "  Portal:       ${BLUE}http://192.168.100.1/${NC}"
+echo -e "  Admin panel:  ${BLUE}http://192.168.100.1:8090/${NC}"
+echo -e "  API health:   ${BLUE}http://192.168.100.1/health${NC}"
 echo ""
-echo -e "${YELLOW}${BOLD}  Next steps:${NC}"
-echo -e "  1. Verify RADIUS is running : ${YELLOW}sudo systemctl status freeradius${NC}"
-echo -e "  2. Verify MariaDB is running: ${YELLOW}sudo systemctl status mariadb${NC}"
-echo -e "  3. Check API logs           : ${YELLOW}pm2 logs captive-api${NC}"
+echo -e "  ${YELLOW}Next steps:${NC}"
+echo -e "  1. Edit backend/.env and set RADIUS_DB_PASS + ADMIN_TOKEN"
+echo -e "  2. Run iptables setup:  sudo bash /etc/captive-portal/iptables-setup.sh"
+echo -e "  3. Connect MikroTik as dumb AP (see DEPLOYMENT.md Part 6)"
+echo -e "  4. Connect a phone to Wi-Fi and test the portal flow"
 echo ""
