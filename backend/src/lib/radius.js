@@ -55,6 +55,7 @@ function pool() {
 const LAN_IFACE = process.env.LAN_IFACE || 'eth1';
 
 async function iptablesAdd(mac) {
+  // FORWARD: allow this MAC through
   try {
     await execAsync(
       `sudo iptables -I authorized_clients 1 -m mac --mac-source ${mac} -j ACCEPT`
@@ -62,15 +63,16 @@ async function iptablesAdd(mac) {
   } catch (err) {
     console.warn(`⚠ iptables FORWARD add (non-fatal): ${err.message}`);
   }
+
+  // PREROUTING: skip portal redirect for this MAC (HTTP + HTTPS)
   try {
     await execAsync(
-      `sudo iptables -t nat -I PREROUTING 1 -i ${LAN_IFACE} -m mac --mac-source ${mac} -j RETURN`
+      `sudo iptables -t nat -I PREROUTING 1 -i eth1 -m mac --mac-source ${mac} -j RETURN`
     );
   } catch (err) {
     console.warn(`⚠ iptables NAT add (non-fatal): ${err.message}`);
   }
 }
-
 async function iptablesDel(mac) {
   try {
     await execAsync(
@@ -79,9 +81,10 @@ async function iptablesDel(mac) {
   } catch (err) {
     console.warn(`⚠ iptables FORWARD del (non-fatal): ${err.message}`);
   }
+
   try {
     await execAsync(
-      `sudo iptables -t nat -D PREROUTING -i ${LAN_IFACE} -m mac --mac-source ${mac} -j RETURN`
+      `sudo iptables -t nat -D PREROUTING -i eth1 -m mac --mac-source ${mac} -j RETURN`
     );
   } catch (err) {
     console.warn(`⚠ iptables NAT del (non-fatal): ${err.message}`);
