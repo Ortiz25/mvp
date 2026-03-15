@@ -1,5 +1,6 @@
 'use strict';
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
+const { cleanupExpiredSessions, cleanupOrphanedIptablesRules } = require('./lib/sessionCleanup');
 
 const express   = require('express');
 const cors      = require('cors');
@@ -16,6 +17,20 @@ const IS_DEV   = NODE_ENV !== 'production';
 
 // ── Bootstrap DB ──────────────────────────────────────────────────────────
 migrate();
+
+// Run cleanup every 60 seconds
+setInterval(async () => {
+  console.log('[Routine] Running session cleanup every 60 secs...');
+  await cleanupExpiredSessions();
+  await cleanupOrphanedIptablesRules();
+}, 60 * 1000);
+
+// Also run once on startup to catch any sessions that expired during downtime
+setTimeout(async () => {
+  console.log('[STARTUP] Running session cleanup...');
+  await cleanupExpiredSessions();
+  await cleanupOrphanedIptablesRules();
+}, 5000);
 
 const app = express();
 app.set('trust proxy', 1);
@@ -70,6 +85,8 @@ app.use((err, _req, res, _next) => {
   if (IS_DEV) console.error(err.stack);
   res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
 });
+
+
 
 // ── Start ─────────────────────────────────────────────────────────────────
 app.listen(PORT, '0.0.0.0', () => {
