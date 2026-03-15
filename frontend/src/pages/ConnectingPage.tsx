@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { usePortal } from '../context/SessionContext';
 
-const FINAL_URL = 'http://neverssl.com';
+// After auth, navigate to Google's connectivity check URL.
+// This returns a real 204 from Google's servers (since iptables
+// now allows this MAC through), which tells the OS internet is
+// available and updates the Wi-Fi icon.
+const FINAL_URL = 'http://connectivitycheck.gstatic.com/generate_204';
 
 export function ConnectingPage() {
   const { hotspot, status } = usePortal();
@@ -13,16 +17,15 @@ export function ConnectingPage() {
     if (fired.current) return;
     fired.current = true;
 
-    // RADIUS grant already done by backend — MAC is in radcheck.
-    // Backend already fired the login fetch from Pi IP (trusted).
-    // We just need to navigate to plain HTTP to trigger OS
-    // connectivity detection and dismiss the WebView.
     const interval = setInterval(() => {
       setCountdown(c => c - 1);
     }, 1000);
 
     const timer = setTimeout(() => {
       clearInterval(interval);
+      // Navigate to Google's connectivity check — returns real 204
+      // which dismisses the captive portal WebView and updates Wi-Fi icon.
+      // The OS then knows internet is available.
       window.location.replace(FINAL_URL);
     }, 3000);
 
@@ -52,7 +55,7 @@ export function ConnectingPage() {
       <div className="text-center">
         <p className="font-display font-bold text-white text-xl mb-1">You're Connected!</p>
         <p className="text-sm text-white/50 font-body">
-          {countdown > 0 ? `Opening browser in ${countdown}s...` : 'Opening browser...'}
+          {countdown > 0 ? `Opening browser in ${countdown}s...` : 'Connecting...'}
         </p>
       </div>
 
