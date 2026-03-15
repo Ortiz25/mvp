@@ -18,6 +18,7 @@ const IS_DEV   = NODE_ENV !== 'production';
 
 // ── Bootstrap DB ──────────────────────────────────────────────────────────
 migrate();
+restoreActiveSessionRules();
 
 // Startup: restore rules for sessions that survived a reboot/restart
 // AND revoke any that expired during downtime

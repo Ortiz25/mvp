@@ -20,9 +20,10 @@ function nowLocal() {
 
 async function getAuthorizedMacsFromIptables() {
   try {
-    const { stdout } = await execAsync('sudo iptables -L authorized_clients -n');
+    const { stdout } =
+await execAsync('sudo iptables -t mangle -L authorized_clients -n');
     return stdout.split('\n')
-      .filter(l => l.includes('MAC'))
+      .filter(l => l.includes('MARK'))
       .map(l => { const m = l.match(/MAC ([0-9a-fA-F:]{17})/); return m ? m[1].toUpperCase() : null; })
       .filter(Boolean);
   } catch {
@@ -54,12 +55,11 @@ async function restoreActiveSessionRules() {
         // Session is active in DB but rule is missing from iptables — restore it
         console.log(`[RESTORE] Re-adding iptables rule for active session: ${mac}`);
         try {
-          await execAsync(
-            `sudo iptables -I authorized_clients 1 -m mac --mac-source ${mac} -j ACCEPT`
-          );
-          await execAsync(
-            `sudo iptables -t nat -I PREROUTING 1 -i eth1 -m mac --mac-source ${mac} -j RETURN`
-          );
+            await execAsync(`
+                sudo iptables -t mangle -I authorized_clients 1 \
+                -m mac --mac-source ${mac} \
+                -j MARK --set-mark 2
+                `);
           console.log(`[RESTORE] ✅ Rules restored for ${mac}`);
         } catch (err) {
           console.error(`[RESTORE] Failed to restore rules for ${mac}:`, err.message);

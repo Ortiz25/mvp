@@ -53,42 +53,39 @@ function pool() {
 // ── iptables helpers ──────────────────────────────────────────────────────
 
 const LAN_IFACE = process.env.LAN_IFACE || 'eth1';
-
 async function iptablesAdd(mac) {
-  // FORWARD: allow this MAC through
+
   try {
-    await execAsync(
-      `sudo iptables -I authorized_clients 1 -m mac --mac-source ${mac} -j ACCEPT`
-    );
+
+    await execAsync(`
+sudo iptables -t mangle -I authorized_clients 1 \
+-m mac --mac-source ${mac} \
+-j MARK --set-mark 2
+`);
+
   } catch (err) {
-    console.warn(`⚠ iptables FORWARD add (non-fatal): ${err.message}`);
+
+    console.warn(`iptables mark add failed: ${err.message}`);
+
   }
 
-  // PREROUTING: skip portal redirect for this MAC (HTTP + HTTPS)
-  try {
-    await execAsync(
-      `sudo iptables -t nat -I PREROUTING 1 -i eth1 -m mac --mac-source ${mac} -j RETURN`
-    );
-  } catch (err) {
-    console.warn(`⚠ iptables NAT add (non-fatal): ${err.message}`);
-  }
 }
 async function iptablesDel(mac) {
-  try {
-    await execAsync(
-      `sudo iptables -D authorized_clients -m mac --mac-source ${mac} -j ACCEPT`
-    );
-  } catch (err) {
-    console.warn(`⚠ iptables FORWARD del (non-fatal): ${err.message}`);
-  }
 
   try {
-    await execAsync(
-      `sudo iptables -t nat -D PREROUTING -i eth1 -m mac --mac-source ${mac} -j RETURN`
-    );
+
+    await execAsync(`
+sudo iptables -t mangle -D authorized_clients \
+-m mac --mac-source ${mac} \
+-j MARK --set-mark 2
+`);
+
   } catch (err) {
-    console.warn(`⚠ iptables NAT del (non-fatal): ${err.message}`);
+
+    console.warn(`iptables mark del failed: ${err.message}`);
+
   }
+
 }
 
 // ── Public API ────────────────────────────────────────────────────────────
@@ -114,7 +111,6 @@ async function grantAccess(mac, hours = 1) {
 
   await iptablesAdd(normMac);
 
-  setTimeout(() => revokeAccess(normMac), timeout * 1000);
 
   console.log(`✅ Access granted: ${normMac} | hours=${hours}`);
   return { ok: true, mock: false, mac: normMac };
