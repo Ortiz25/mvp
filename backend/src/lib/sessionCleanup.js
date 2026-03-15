@@ -1,49 +1,119 @@
 'use strict';
-/**
- * sessionCleanup.js
- * Runs on a schedule — checks radreply for expired Session-Timeout
- * and revokes any MACs whose sessions have expired.
- * Also cross-checks iptables authorized_clients chain.
- */
 
+const { revokeAccess, normalizeMac } = require('./radius');
+const { getDb } = require('../db/migrate');
 const { exec } = require('child_process');
 const util = require('util');
 const execAsync = util.promisify(exec);
-const { revokeAccess } = require('./radius');
-const { getDb } = require('../db/migrate');
 
-async function cleanupExpiredSessions() {
-  const db = getDb();
+// ── Time helpers ──────────────────────────────────────────────────────────
 
+function nowLocal() {
+  // Returns current time as SQLite-compatible local datetime string
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ` +
+         `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+}
+
+// ── Get MACs currently in iptables authorized_clients ─────────────────────
+
+async function getAuthorizedMacsFromIptables() {
   try {
-    // Find sessions that have expired (expires_at < now)
-    const expired = db.prepare(`
+    const { stdout } = await execAsync('sudo iptables -L authorized_clients -n');
+    return stdout.split('\n')
+      .filter(l => l.includes('MAC'))
+      .map(l => { const m = l.match(/MAC ([0-9a-fA-F:]{17})/); return m ? m[1].toUpperCase() : null; })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+// ── Restore iptables rules for sessions that are active in DB ─────────────
+
+async function restoreActiveSessionRules() {
+  const db = getDb();
+  try {
+    const now = nowLocal();
+    const active = db.prepare(`
       SELECT mac_address FROM sessions
       WHERE access_granted = 1
         AND expires_at IS NOT NULL
-        AND expires_at < datetime('now')
+        AND expires_at > ?
         AND mac_address IS NOT NULL
+    `).all(now);
+
+    if (active.length === 0) { db.close(); return; }
+
+    const iptablesMacs = await getAuthorizedMacsFromIptables();
+
+    for (const row of active) {
+      const mac = normalizeMac(row.mac_address);
+      if (!iptablesMacs.includes(mac)) {
+        // Session is active in DB but rule is missing from iptables — restore it
+        console.log(`[RESTORE] Re-adding iptables rule for active session: ${mac}`);
+        try {
+          await execAsync(
+            `sudo iptables -I authorized_clients 1 -m mac --mac-source ${mac} -j ACCEPT`
+          );
+          await execAsync(
+            `sudo iptables -t nat -I PREROUTING 1 -i eth1 -m mac --mac-source ${mac} -j RETURN`
+          );
+          console.log(`[RESTORE] ✅ Rules restored for ${mac}`);
+        } catch (err) {
+          console.error(`[RESTORE] Failed to restore rules for ${mac}:`, err.message);
+        }
+      }
+    }
+  } finally {
+    db.close();
+  }
+}
+
+// ── Revoke expired sessions ───────────────────────────────────────────────
+
+async function cleanupExpiredSessions() {
+  const db = getDb();
+  try {
+    const now = nowLocal();
+
+    // Log active sessions for debugging
+    const active = db.prepare(`
+      SELECT mac_address, expires_at FROM sessions
+      WHERE access_granted = 1 AND mac_address IS NOT NULL
     `).all();
 
-    if (expired.length === 0) {
-      db.close();
-      return;
+    if (active.length > 0) {
+      console.log(`[CLEANUP] Active sessions: ${active.length} | Now: ${now}`);
+      active.forEach(s => {
+        const expired = s.expires_at < now;
+        console.log(`[CLEANUP] ${s.mac_address} expires: ${s.expires_at} ${expired ? '← EXPIRED' : '← active'}`);
+      });
     }
 
-    console.log(`[CLEANUP] Found ${expired.length} expired session(s)`);
+    const expired = db.prepare(`
+      SELECT mac_address, expires_at FROM sessions
+      WHERE access_granted = 1
+        AND expires_at IS NOT NULL
+        AND expires_at < ?
+        AND mac_address IS NOT NULL
+    `).all(now);
+
+    if (expired.length === 0) { db.close(); return; }
+
+    console.log(`[CLEANUP] Revoking ${expired.length} expired session(s)`);
 
     for (const row of expired) {
+      console.log(`[CLEANUP] Revoking: ${row.mac_address} (expired: ${row.expires_at})`);
       try {
-        console.log(`[CLEANUP] Revoking expired session: ${row.mac_address}`);
         await revokeAccess(row.mac_address);
-
-        // Mark session as revoked in SQLite
         db.prepare(`
           UPDATE sessions
-          SET access_granted = 0, expires_at = NULL, updated_at = datetime('now')
+          SET access_granted = 0, expires_at = NULL, updated_at = ?
           WHERE mac_address = ? AND access_granted = 1
-        `).run(row.mac_address);
-
+        `).run(now, row.mac_address);
+        console.log(`[CLEANUP] ✅ Revoked: ${row.mac_address}`);
       } catch (err) {
         console.error(`[CLEANUP] Failed to revoke ${row.mac_address}:`, err.message);
       }
@@ -53,37 +123,4 @@ async function cleanupExpiredSessions() {
   }
 }
 
-async function cleanupOrphanedIptablesRules() {
-  // Get MACs currently in iptables authorized_clients chain
-  try {
-    const { stdout } = await execAsync('sudo iptables -L authorized_clients -n');
-    const lines = stdout.split('\n').filter(l => l.includes('MAC'));
-    const iptablesMacs = lines.map(l => {
-      const match = l.match(/MAC ([0-9a-f:]{17})/i);
-      return match ? match[1].toLowerCase() : null;
-    }).filter(Boolean);
-
-    if (iptablesMacs.length === 0) return;
-
-    // Check each against SQLite — if no active session, revoke
-    const db = getDb();
-    for (const mac of iptablesMacs) {
-      const session = db.prepare(`
-        SELECT id FROM sessions
-        WHERE mac_address = ?
-          AND access_granted = 1
-          AND expires_at > datetime('now')
-      `).get(mac);
-
-      if (!session) {
-        console.log(`[CLEANUP] Orphaned iptables rule for ${mac} — revoking`);
-        await revokeAccess(mac);
-      }
-    }
-    db.close();
-  } catch (err) {
-    console.error('[CLEANUP] iptables check failed:', err.message);
-  }
-}
-
-module.exports = { cleanupExpiredSessions, cleanupOrphanedIptablesRules };
+module.exports = { cleanupExpiredSessions, restoreActiveSessionRules };

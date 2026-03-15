@@ -84,12 +84,21 @@ function markSurveyDone(id, answers) {
 
 function markAccessGranted(id, hours) {
   const db = getDb();
+  // Use JavaScript Date to avoid SQLite UTC vs localtime confusion
+  const now = new Date();
+  const expires = new Date(now.getTime() + hours * 3600 * 1000);
+  const pad = n => String(n).padStart(2, '0');
+  const fmt = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ` +
+                   `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+
   db.prepare(`
     UPDATE sessions
-    SET access_granted=1, granted_at=datetime('now'),
-        expires_at=datetime('now','+${hours} hours'), updated_at=datetime('now')
+    SET access_granted=1,
+        granted_at=?,
+        expires_at=?,
+        updated_at=?
     WHERE id=?
-  `).run(id);
+  `).run(fmt(now), fmt(expires), fmt(now), id);
   db.close();
 }
 
