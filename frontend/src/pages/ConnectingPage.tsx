@@ -5,7 +5,8 @@ import { usePortal } from '../context/SessionContext';
 // This returns a real 204 from Google's servers (since iptables
 // now allows this MAC through), which tells the OS internet is
 // available and updates the Wi-Fi icon.
-const FINAL_URL = 'http://connectivitycheck.gstatic.com/generate_204';
+// In ConnectingPage.tsx — update FINAL_URL
+const FINAL_URL = 'http://192.168.182.1:3990/loggedin';
 
 export function ConnectingPage() {
   const { hotspot, status } = usePortal();

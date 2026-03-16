@@ -1,25 +1,15 @@
 'use strict';
 /**
- * radius.js — RADIUS grant/revoke via MySQL + iptables (Pi-as-router edition)
+ * radius.js — CoovaChilli edition
+ * Grant/revoke via MariaDB (FreeRADIUS) + chilli_query
  *
- * How it works:
- *   1. INSERT into radcheck  → records MAC authorisation in FreeRADIUS DB
- *   2. INSERT into radreply  → sets Session-Timeout for the MAC
- *   3. `iptables -I authorized_clients` → immediately opens firewall for this MAC
- *
- * NO MikroTik login URL call — Pi controls forwarding directly via iptables.
- * ipset is NOT used (ip_set_hash_mac kernel module missing on RPi custom kernel).
- * Instead, each MAC gets its own rule in the `authorized_clients` iptables chain.
- *
- * Prerequisites on the Pi:
- *   sudo iptables -N authorized_clients
- *   sudo iptables -A FORWARD -i eth1 -o eth0 -j authorized_clients
- *   sudo visudo → add:  admin ALL=(ALL) NOPASSWD: /sbin/iptables
+ * Socket path: /var/run/chilli.ipc  (not chilli*.sock)
+ * chilli_query returns "Timeout" when no clients connected — this is normal.
  */
 
-const mysql    = require('mysql2/promise');
-const { exec } = require('child_process');
-const util     = require('util');
+const mysql     = require('mysql2/promise');
+const { exec }  = require('child_process');
+const util      = require('util');
 const execAsync = util.promisify(exec);
 
 // ── MAC helpers ───────────────────────────────────────────────────────────
@@ -50,42 +40,37 @@ function pool() {
   return _pool;
 }
 
-// ── iptables helpers ──────────────────────────────────────────────────────
+// ── CoovaChilli helpers ───────────────────────────────────────────────────
 
-const LAN_IFACE = process.env.LAN_IFACE || 'eth1';
-async function iptablesAdd(mac) {
+// Socket path confirmed in production: /var/run/chilli.ipc
+// NOT /var/run/chilli*.sock — that glob matches nothing on this build
+const CHILLI_CMD = process.env.CHILLI_QUERY_CMD
+  || 'sudo chilli_query -s /var/run/chilli.ipc';
 
+async function chilliAuthorize(mac, timeoutSeconds = 3600) {
   try {
-
-    await execAsync(`
-sudo iptables -t mangle -I authorized_clients 1 \
--m mac --mac-source ${mac} \
--j MARK --set-mark 2
-`);
-
+    // Format: chilli_query authorize <MAC> <up_bw> <down_bw> <timeout>
+    // 0 0 = unlimited bandwidth
+    const cmd = `${CHILLI_CMD} authorize ${mac} 0 0 ${timeoutSeconds}`;
+    const { stdout, stderr } = await execAsync(cmd);
+    // "Timeout" in stdout = no active session for this MAC yet = normal
+    // chilli_query authorize is silently ignored if MAC is unknown to chilli
+    // (client must have connected and received DHCP first)
+    console.log(`[CHILLI] authorize ${mac}: ${(stdout || stderr || 'ok').trim()}`);
   } catch (err) {
-
-    console.warn(`iptables mark add failed: ${err.message}`);
-
+    console.warn(`[CHILLI] authorize failed for ${mac}: ${err.message}`);
   }
-
 }
-async function iptablesDel(mac) {
 
+async function chilliDeauthorize(mac) {
   try {
-
-    await execAsync(`
-sudo iptables -t mangle -D authorized_clients \
--m mac --mac-source ${mac} \
--j MARK --set-mark 2
-`);
-
+    const cmd = `${CHILLI_CMD} deauthorize ${mac}`;
+    const { stdout, stderr } = await execAsync(cmd);
+    console.log(`[CHILLI] deauthorize ${mac}: ${(stdout || stderr || 'ok').trim()}`);
   } catch (err) {
-
-    console.warn(`iptables mark del failed: ${err.message}`);
-
+    // Not an error if MAC wasn't active
+    console.warn(`[CHILLI] deauthorize failed for ${mac}: ${err.message}`);
   }
-
 }
 
 // ── Public API ────────────────────────────────────────────────────────────
@@ -95,6 +80,7 @@ async function grantAccess(mac, hours = 1) {
   const timeout = hours * 3600;
   const db = pool();
 
+  // Insert into FreeRADIUS DB — chilli reads this on next RADIUS request
   await db.execute(
     `INSERT INTO radcheck (username, attribute, op, value)
        VALUES (?, 'Auth-Type', ':=', 'Accept')
@@ -109,8 +95,8 @@ async function grantAccess(mac, hours = 1) {
     [normMac, String(timeout)]
   );
 
-  await iptablesAdd(normMac);
-
+  // Tell CoovaChilli to open the firewall for this MAC immediately
+  await chilliAuthorize(normMac, timeout);
 
   console.log(`✅ Access granted: ${normMac} | hours=${hours}`);
   return { ok: true, mock: false, mac: normMac };
@@ -123,7 +109,7 @@ async function revokeAccess(mac) {
   await db.execute('DELETE FROM radcheck WHERE username = ?', [normMac]);
   await db.execute('DELETE FROM radreply  WHERE username = ?', [normMac]);
 
-  await iptablesDel(normMac);
+  await chilliDeauthorize(normMac);
 
   console.log(`🗑 Access revoked: ${normMac}`);
   return { ok: true };
@@ -141,22 +127,22 @@ async function testConnection() {
 
 async function listAuthorizedClients() {
   try {
-    const db = pool();
-    const [rows] = await db.execute(
-      `SELECT r.username AS mac, reply.value AS timeout_seconds
-       FROM radcheck r
-       LEFT JOIN radreply reply
-         ON reply.username = r.username AND reply.attribute = 'Session-Timeout'
-       WHERE r.attribute = 'Auth-Type'`
-    );
-    return rows;
+    // Use chilli_query for live session list
+    const { stdout } = await execAsync(`${CHILLI_CMD} list`);
+    if (!stdout || stdout.includes('Timeout')) return [];
+    return stdout.trim().split('\n')
+      .filter(Boolean)
+      .map(line => {
+        const parts = line.trim().split(/\s+/);
+        return { mac: parts[0], ip: parts[1] };
+      });
   } catch {
     return [];
   }
 }
 
-function buildLogoutUrl(mac) {
-  return { url: null, note: 'Revoke via iptables — call revokeAccess(mac) directly' };
+function buildLogoutUrl(_mac) {
+  return { url: null, note: 'Revoke via chilli_query — call revokeAccess(mac) directly' };
 }
 
 module.exports = {

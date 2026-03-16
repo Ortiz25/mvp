@@ -24,14 +24,14 @@ let _cached: HotspotParams | null = null;
 
 // Sentinel values that should never be stored as a real dst
 const DST_SENTINELS = [
-  'captive.local', '192.168.88.1', '192.168.88.2',
+  'captive.local',
+  '192.168.100.1',   // old
+  '192.168.182.1',   // ← add
+  '192.168.88.1', '192.168.88.2',
   '/gen_204', '/generate_204', '/connecttest', '/ncsi',
   '/hotspot-detect', '/canonical.html', 'hotspot/login', '/login',
-  'neverssl.com',   // our redirect-confirm target
-  'example.com',    // old redirect-confirm target
-  'google.com',     // 301→HTTPS causes loop
+  'neverssl.com', 'example.com', 'google.com',
 ];
-
 function sanitizeDst(raw: string | null): string | null {
   if (!raw) return null;
   let d = raw;
@@ -48,7 +48,11 @@ function readHotspotParams(): HotspotParams {
   const p   = new URLSearchParams(window.location.search);
   const mac = p.get('mac') || p.get('username') || null;
   const ip  = p.get('ip') || null;
-  const dst = sanitizeDst(p.get('dst') || p.get('link-orig') || null);
+  // CoovaChilli passes original URL as 'userurl'
+  // MikroTik uses 'dst' or 'link-orig'
+  const dst = sanitizeDst(
+    p.get('dst') || p.get('link-orig') || p.get('userurl') || null
+  );
 
   if (mac) {
     const params: HotspotParams = { mac, ip, dst };
