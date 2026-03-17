@@ -21,14 +21,12 @@ export function SurveyPage() {
 
   useEffect(() => {
     if (loading) return;
-    // Already granted → go to connecting (which will do MikroTik login redirect)
     if (status?.active || status?.accessGranted) {
       navigate('/connecting', { replace: true }); return;
     }
     if (status && !status.videoWatched) {
       navigate('/watch', { replace: true }); return;
     }
-    // No survey questions → go straight to grant
     if (config && !config.survey?.questions?.length) {
       doGrant();
     }
@@ -39,8 +37,10 @@ export function SurveyPage() {
     setSubmitting(true);
     setError('');
     try {
-      await portalApi.grantAccess(selectedSlug, status.sessionId);
-      // Refresh server state then navigate — server now returns accessGranted=true
+      // Pass the CoovaChilli challenge so the backend can call
+      // chilli's UAM /logon endpoint and actually open internet access.
+      // Without this, chilli_query authorize has no effect on the live session.
+      await portalApi.grantAccess(selectedSlug, status.sessionId, hotspot.challenge);
       await refresh();
       navigate('/connecting', { replace: true });
     } catch (e) {

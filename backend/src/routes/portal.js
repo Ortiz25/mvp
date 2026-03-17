@@ -259,7 +259,7 @@ router.post('/:slug/survey/submit', (req, res) => {
 
 // ── POST /api/:slug/access/grant ───────────────────────────────────────────
 router.post('/:slug/access/grant', async (req, res) => {
-  const { sessionId } = req.body;
+  const { sessionId, challenge } = req.body;
   if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
 
   const session = getSession(sessionId);
@@ -292,7 +292,7 @@ router.post('/:slug/access/grant', async (req, res) => {
 
   console.log(`🎯 Grant: mac=${mac} campaign=${c.slug} hours=${hours}`);
 
-  const result = await grantAccess(mac, hours, getClientIp(req));
+  const result = await grantAccess(mac, hours, getClientIp(req), challenge);
 
   markAccessGranted(sessionId, hours);
   const expiresAt = new Date(Date.now() + hours * 3600000).toISOString();

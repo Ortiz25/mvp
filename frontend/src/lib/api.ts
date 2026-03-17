@@ -32,8 +32,8 @@ export interface PortalStatus {
   accessGranted: boolean;
   active:        boolean;
   expiresAt:     string | null;
-  mac:           string | null;  // from session DB — fallback if URL params lost
-  dst:           string | null;  // original destination URL — used for MikroTik /login redirect
+  mac:           string | null;
+  dst:           string | null;
 }
 
 export interface SurveyQuestion {
@@ -62,9 +62,11 @@ export interface SurveyAnswer {
 }
 
 export interface HotspotParams {
-  mac: string | null;
-  ip:  string | null;
-  dst: string | null;
+  mac:       string | null;
+  ip:        string | null;
+  dst:       string | null;
+  challenge: string | null;
+  chilliSid: string | null;
 }
 
 export interface GrantResult {
@@ -103,9 +105,12 @@ export const portalApi = {
       body: JSON.stringify({ sessionId, answers }),
     }),
 
-  grantAccess: (slug: string, sessionId: string) =>
+  // challenge is the CoovaChilli UAM token from the loginurl redirect.
+  // The backend uses it to call chilli's /logon endpoint and authorize
+  // the session at network layer (move from dnat → pass state).
+  grantAccess: (slug: string, sessionId: string, challenge: string | null) =>
     req<GrantResult>(`/api/${slug}/access/grant`, {
       method: 'POST',
-      body: JSON.stringify({ sessionId }),
+      body: JSON.stringify({ sessionId, challenge }),
     }),
 };
