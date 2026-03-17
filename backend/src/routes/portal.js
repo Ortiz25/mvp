@@ -292,7 +292,8 @@ router.post('/:slug/access/grant', async (req, res) => {
 
   console.log(`🎯 Grant: mac=${mac} campaign=${c.slug} hours=${hours}`);
 
-  const result = await grantAccess(mac, hours);
+  const clientIp = getClientIp(req);
+  const result = await grantAccess(mac, hours, clientIp);
 
   markAccessGranted(sessionId, hours);
   const expiresAt = new Date(Date.now() + hours * 3600000).toISOString();
