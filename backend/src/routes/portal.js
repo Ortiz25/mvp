@@ -2,44 +2,39 @@
 /**
  * portal.js — CoovaChilli edition
  *
- * Grant flow:
- *   1. Frontend POST /api/:slug/access/grant { sessionId }
- *   2. Backend → radius.grantAccess(mac, hours)
- *        a. INSERT into radcheck (Auth-Type = Accept)
- *        b. INSERT into radreply (Session-Timeout = seconds)
- *        c. chilli_query authorize <MAC> 0 0 <timeout>
- *   3. Frontend navigates to /connecting
- *   4. ConnectingPage navigates to http://192.168.182.1:3990/loggedin
- *   5. CoovaChilli returns real response for authorized MAC
- *   6. OS captive portal WebView dismissed
+ * MAC resolution order (status + grant):
+ *   1. ?mac= top-level query param
+ *   2. loginurl inner params (CoovaChilli redirect path)
+ *   3. chilli_query list (most reliable — chilli owns the DHCP leases)
+ *   4. Pi ARP table (last resort)
  *
- * MAC resolution order:
- *   1. ?mac= or ?username= query param (top-level — standard path)
- *   2. ?loginurl= query param — CoovaChilli wraps its redirect as:
- *      /?loginurl=http://192.168.182.1/?res=notyet&mac=XX&ip=YY&...
- *      The MAC is inside the loginurl value, not at the top level.
- *   3. Pi ARP table lookup by client IP (arp -n <ip>) — fallback
+ * Challenge resolution order (grant):
+ *   1. session.challenge — stored when loginurl was first parsed
+ *   2. req.body.challenge — sent by frontend if new SessionContext deployed
+ *
+ * The challenge is the CoovaChilli UAM token used to compute the logon
+ * response that moves a session from dnat → pass state.
  */
 const express  = require('express');
 const router   = express.Router();
 const { exec } = require('child_process');
 
-const { grantAccess } = require('../lib/radius');
+const { grantAccess }    = require('../lib/radius');
 const { getAllCampaigns, getCampaignBySlug, getCampaignConfig } = require('../lib/campaigns');
 const {
   getOrCreateSession, getSession, isSessionActive,
   markVideoWatched, markSurveyDone, markAccessGranted,
 } = require('../lib/sessions');
 
-// Sentinel values that must never be used as redirect destinations
+const CHILLI_IPC = process.env.CHILLI_QUERY_CMD || 'sudo chilli_query -s /var/run/chilli.ipc';
+
+// ── Sentinel dst values that must never be used as redirects ──────────────
 const DST_SENTINELS = [
-  'captive.local',
-  '192.168.100.1',  // old iptables subnet
-  '192.168.182.1',  // CoovaChilli UAM IP — never redirect back to portal
+  'captive.local', '192.168.100.1', '192.168.182.1',
   '192.168.88.1', '192.168.88.2',
   '/gen_204', '/generate_204', '/connecttest', '/ncsi',
   '/hotspot-detect', '/canonical.html', 'hotspot/login', '/login',
-  'neverssl.com', 'example.com', 'google.com',
+  'neverssl.com', 'example.com', 'google.com', 'generate_204', 'loggedin',
 ];
 
 function sanitizeDst(raw) {
@@ -60,47 +55,37 @@ function getClientIp(req) {
   );
 }
 
-/**
- * extractCoovaParams(query)
- *
- * CoovaChilli redirects unauthenticated clients to:
- *   http://192.168.182.1/?loginurl=http%3a%2f%2f192.168.182.1%2f%3f
- *     res%3dnotyet%26uamip%3d192.168.182.1%26uamport%3d3990
- *     %26mac%3d08-31-8B-90-50-F8%26ip%3d192.168.182.50
- *     %26userurl%3dhttp%253a%252f%252f...
- *
- * The MAC, IP, and original URL are inside the loginurl value.
- * This function extracts them from the nested URL.
- *
- * Note: CoovaChilli formats MAC with dashes (08-31-8B-90-50-F8).
- * normalizeMac() in radius.js handles both dash and colon formats.
- */
+// ── extractCoovaParams ────────────────────────────────────────────────────
+// CoovaChilli redirects to:
+//   /?loginurl=http://192.168.182.1/?res=notyet&challenge=XXX
+//              &mac=08-31-8B-90-50-F8&ip=192.168.182.50
+//              &sessionid=SSSS&userurl=...
+// Everything we need is inside the loginurl value.
 function extractCoovaParams(query) {
-  const result = { mac: null, ip: null, dst: null };
-
+  const result = { mac: null, ip: null, dst: null, challenge: null, chilliSid: null };
   const loginurl = query.loginurl;
   if (!loginurl) return result;
 
   try {
-    // loginurl may be single or double encoded
     let decoded = loginurl;
     try { decoded = decodeURIComponent(decoded); } catch {}
     try { decoded = decodeURIComponent(decoded); } catch {}
 
-    // Parse the inner URL's query string
     const qstart = decoded.indexOf('?');
     if (qstart === -1) return result;
 
     const inner = new URLSearchParams(decoded.slice(qstart + 1));
 
-    result.mac = inner.get('mac') || inner.get('username') || null;
-    result.ip  = inner.get('ip')  || null;
-    result.dst = sanitizeDst(
+    result.mac       = inner.get('mac') || inner.get('username') || null;
+    result.ip        = inner.get('ip')  || null;
+    result.challenge = inner.get('challenge') || null;
+    result.chilliSid = inner.get('sessionid') || null;
+    result.dst       = sanitizeDst(
       inner.get('userurl') || inner.get('dst') || inner.get('link-orig') || null
     );
 
-    if (result.mac) {
-      console.log(`[COOVA] Extracted from loginurl — mac=${result.mac} ip=${result.ip}`);
+    if (result.mac || result.challenge) {
+      console.log(`[COOVA] loginurl → mac=${result.mac} ip=${result.ip} challenge=${result.challenge ? result.challenge.slice(0,8)+'…' : null}`);
     }
   } catch (err) {
     console.warn('[COOVA] Failed to parse loginurl:', err.message);
@@ -109,28 +94,41 @@ function extractCoovaParams(query) {
   return result;
 }
 
-/**
- * getMacFromArp(ip)
- * Fallback MAC resolution via the Pi's ARP table.
- * Works because CoovaChilli routes all client traffic through tun0/eth1.
- */
-function getMacFromArp(ip) {
+// ── getMacForIp ───────────────────────────────────────────────────────────
+// Tries chilli_query list first (most reliable), then OS ARP table.
+function getMacForIp(ip) {
   return new Promise((resolve) => {
     if (!ip || ip === '127.0.0.1' || ip === '::1') return resolve(null);
 
-    exec(`arp -n ${ip}`, (err, stdout) => {
-      if (err) return resolve(null);
-      const match = stdout.match(/([0-9a-f]{2}[:\-][0-9a-f]{2}[:\-][0-9a-f]{2}[:\-][0-9a-f]{2}[:\-][0-9a-f]{2}[:\-][0-9a-f]{2})/i);
-      if (match) {
-        console.log(`[ARP] Resolved ${ip} → ${match[1]}`);
-        return resolve(match[1]);
+    // Primary: chilli_query list — chilli has the MAC from DHCP exchange
+    exec(`${CHILLI_IPC} list`, (err, stdout) => {
+      if (!err && stdout && stdout.trim()) {
+        const line = stdout.split('\n').find(l => l.includes(ip));
+        if (line) {
+          const parts = line.trim().split(/\s+/);
+          const mac = parts[0]; // first column: MAC in dash format
+          if (mac && /^[0-9a-f]{2}[-:]/i.test(mac)) {
+            console.log(`[CHILLI-LIST] ${ip} → ${mac}`);
+            return resolve(mac);
+          }
+        }
       }
-      resolve(null);
+
+      // Fallback: OS ARP table
+      exec(`arp -n ${ip}`, (err2, stdout2) => {
+        if (err2) return resolve(null);
+        const match = stdout2.match(/([0-9a-f]{2}[:\-][0-9a-f]{2}[:\-][0-9a-f]{2}[:\-][0-9a-f]{2}[:\-][0-9a-f]{2}[:\-][0-9a-f]{2})/i);
+        if (match) {
+          console.log(`[ARP] ${ip} → ${match[1]}`);
+          return resolve(match[1]);
+        }
+        resolve(null);
+      });
     });
   });
 }
 
-// ── GET /api/campaigns ─────────────────────────────────────────────────────
+// ── GET /api/campaigns ────────────────────────────────────────────────────
 router.get('/campaigns', (_req, res) => {
   const campaigns = getAllCampaigns(false).map(c => ({
     id:                 c.id,
@@ -146,44 +144,45 @@ router.get('/campaigns', (_req, res) => {
   res.json({ campaigns });
 });
 
-// ── GET /api/client-mac ────────────────────────────────────────────────────
-// Called by the React frontend on load to discover its own MAC address.
+// ── GET /api/client-mac ───────────────────────────────────────────────────
 router.get('/client-mac', async (req, res) => {
   const ip = getClientIp(req);
   if (!ip) return res.status(400).json({ error: 'Cannot determine client IP' });
-  const mac = await getMacFromArp(ip);
+  const mac = await getMacForIp(ip);
   if (!mac) return res.status(404).json({
-    error: 'MAC not found in ARP table — reconnect to Wi-Fi and try again',
+    error: 'MAC not found — reconnect to Wi-Fi and try again',
   });
   res.json({ mac, ip });
 });
 
-// ── GET /api/:slug/status ──────────────────────────────────────────────────
+// ── GET /api/:slug/status ─────────────────────────────────────────────────
 router.get('/:slug/status', async (req, res) => {
   const c = getCampaignBySlug(req.params.slug);
   if (!c) return res.status(404).json({ error: 'Campaign not found' });
 
   const ip = req.query.ip || getClientIp(req);
 
-  // MAC resolution: top-level params → loginurl params → ARP
-  let mac = req.query.mac || req.query.username || null;
-  let dst = sanitizeDst(
+  // MAC + challenge resolution — four layers
+  let mac       = req.query.mac || req.query.username || null;
+  let challenge = req.query.challenge || null;
+  let dst       = sanitizeDst(
     req.query.dst || req.query['link-orig'] || req.query.userurl || null
   );
 
-  // CoovaChilli path — params are nested inside loginurl
-  if (!mac && req.query.loginurl) {
+  // Layer 2: CoovaChilli loginurl params
+  if ((!mac || !challenge) && req.query.loginurl) {
     const coova = extractCoovaParams(req.query);
-    mac = coova.mac || mac;
-    dst = dst || coova.dst;
+    if (!mac)       mac       = coova.mac       || null;
+    if (!challenge) challenge = coova.challenge || null;
+    if (!dst)       dst       = coova.dst       || null;
   }
 
-  // ARP fallback
-  if (!mac && ip) mac = await getMacFromArp(ip);
+  // Layer 3: chilli_query list + ARP fallback
+  if (!mac && ip) mac = await getMacForIp(ip);
 
-  console.log(`[STATUS] slug=${req.params.slug} ip=${ip} mac=${mac} dst=${dst}`);
+  console.log(`[STATUS] slug=${req.params.slug} ip=${ip} mac=${mac} challenge=${challenge ? challenge.slice(0,8)+'…' : null}`);
 
-  const session = getOrCreateSession(ip, c.id, mac, dst);
+  const session = getOrCreateSession(ip, c.id, mac, dst, challenge);
 
   res.json({
     sessionId:     session.id,
@@ -200,7 +199,7 @@ router.get('/:slug/status', async (req, res) => {
   });
 });
 
-// ── GET /api/:slug/config ──────────────────────────────────────────────────
+// ── GET /api/:slug/config ─────────────────────────────────────────────────
 router.get('/:slug/config', (req, res) => {
   const cfg = getCampaignConfig(req.params.slug);
   if (!cfg) return res.status(404).json({ error: 'Campaign not found or inactive' });
@@ -229,7 +228,7 @@ router.get('/:slug/config', (req, res) => {
   });
 });
 
-// ── POST /api/:slug/video/complete ─────────────────────────────────────────
+// ── POST /api/:slug/video/complete ────────────────────────────────────────
 router.post('/:slug/video/complete', (req, res) => {
   const { sessionId, watchedPct } = req.body;
   if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
@@ -245,7 +244,7 @@ router.post('/:slug/video/complete', (req, res) => {
   res.json({ success: true });
 });
 
-// ── POST /api/:slug/survey/submit ──────────────────────────────────────────
+// ── POST /api/:slug/survey/submit ─────────────────────────────────────────
 router.post('/:slug/survey/submit', (req, res) => {
   const { sessionId, answers } = req.body;
   if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
@@ -257,9 +256,9 @@ router.post('/:slug/survey/submit', (req, res) => {
   res.json({ success: true });
 });
 
-// ── POST /api/:slug/access/grant ───────────────────────────────────────────
+// ── POST /api/:slug/access/grant ──────────────────────────────────────────
 router.post('/:slug/access/grant', async (req, res) => {
-  const { sessionId, challenge } = req.body;
+  const { sessionId, challenge: bodyChallenge } = req.body;
   if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
 
   const session = getSession(sessionId);
@@ -270,34 +269,38 @@ router.post('/:slug/access/grant', async (req, res) => {
   const c = getCampaignBySlug(req.params.slug);
   if (!c) return res.status(404).json({ error: 'Campaign not found' });
 
-  let   mac   = session.mac_address;
-  const hours = c.session_hours || 1;
+  const clientIp = getClientIp(req);
+  const hours    = c.session_hours || 1;
 
-  // Last-chance MAC resolution via ARP
-  if (!mac) {
-    const ip = getClientIp(req);
-    if (ip) {
-      console.log(`[GRANT] No MAC in session — trying ARP for ${ip}`);
-      mac = await getMacFromArp(ip);
-    }
+  // MAC resolution: session DB → chilli list → ARP
+  let mac = session.mac_address;
+  if (!mac && clientIp) {
+    console.log(`[GRANT] No MAC in session — trying chilli list + ARP for ${clientIp}`);
+    mac = await getMacForIp(clientIp);
   }
 
   if (!mac) {
     console.error('⚠ Grant failed: no MAC for session', sessionId);
     return res.status(400).json({
-      error: 'Cannot grant access: MAC address unknown. ' +
-             'Please reconnect to Wi-Fi and try again.',
+      error: 'Cannot grant access: MAC address unknown. Reconnect to Wi-Fi and try again.',
     });
   }
 
-  console.log(`🎯 Grant: mac=${mac} campaign=${c.slug} hours=${hours}`);
+  // Challenge resolution: body (new frontend) → session DB (stored on status call)
+  const challenge = bodyChallenge || session.challenge || null;
 
-  const result = await grantAccess(mac, hours, getClientIp(req), challenge);
+  if (!challenge) {
+    console.warn(`[GRANT] No challenge for ${mac} — UAM logon will be skipped, chilli_query only`);
+  }
+
+  console.log(`🎯 Grant: mac=${mac} campaign=${c.slug} hours=${hours} challenge=${challenge ? challenge.slice(0,8)+'…' : 'none'}`);
+
+  const result = await grantAccess(mac, hours, clientIp, challenge);
 
   markAccessGranted(sessionId, hours);
   const expiresAt = new Date(Date.now() + hours * 3600000).toISOString();
 
-  console.log(`🌐 Access granted: mac=${mac} ok=${result.ok}`);
+  console.log(`🌐 Access granted: mac=${mac} ok=${result.ok} uam=${result.uam}`);
 
   res.json({
     success:  true,

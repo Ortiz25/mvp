@@ -68,6 +68,7 @@ function migrate() {
       mac_address    TEXT,
       ip_address     TEXT NOT NULL,
       dst_url        TEXT,
+      challenge      TEXT,
       video_watched  INTEGER NOT NULL DEFAULT 0,
       survey_done    INTEGER NOT NULL DEFAULT 0,
       access_granted INTEGER NOT NULL DEFAULT 0,
@@ -95,9 +96,14 @@ function migrate() {
 
   // ── Column migrations — safe to run on existing DBs ──────────────────
   const cols = db.prepare('PRAGMA table_info(sessions)').all().map(c => c.name);
+
   if (!cols.includes('dst_url')) {
     db.exec('ALTER TABLE sessions ADD COLUMN dst_url TEXT');
-    console.log('  ↳ added dst_url column to sessions (Hotspot migration)');
+    console.log('  ↳ added dst_url column to sessions');
+  }
+  if (!cols.includes('challenge')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN challenge TEXT');
+    console.log('  ↳ added challenge column to sessions');
   }
 
   console.log('✅ DB migrated');

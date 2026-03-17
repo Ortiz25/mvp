@@ -9,6 +9,7 @@ function row2s(r) {
     mac_address:   r.mac_address   || null,
     ip_address:    r.ip_address,
     dst_url:       r.dst_url       || null,
+    challenge:     r.challenge     || null,
     video_watched: r.video_watched === 1,
     survey_done:   r.survey_done   === 1,
     access_granted:r.access_granted=== 1,
@@ -19,8 +20,10 @@ function row2s(r) {
   };
 }
 
-// dst = the original URL MikroTik wanted the client to visit (stored for redirect after grant)
-function getOrCreateSession(ip, campaignId, mac = null, dst = null) {
+// challenge = CoovaChilli UAM challenge token (from loginurl params)
+// Stored so the grant handler can use it even if the phone navigated
+// away from the original loginurl and lost the query params.
+function getOrCreateSession(ip, campaignId, mac = null, dst = null, challenge = null) {
   const db = getDb();
   let row;
 
@@ -34,20 +37,35 @@ function getOrCreateSession(ip, campaignId, mac = null, dst = null) {
   ).get(ip, campaignId);
 
   if (row) {
+    // Update mutable fields — always take the freshest non-null value
+    // Challenge is especially important: update it if we have a new one
+    // (each new chilli session generates a new challenge)
     db.prepare(`
       UPDATE sessions
-      SET ip_address=?, mac_address=COALESCE(?,mac_address),
-          dst_url=COALESCE(?,dst_url), updated_at=datetime('now')
-      WHERE id=?
-    `).run(ip, mac, dst, row.id);
+      SET ip_address  = ?,
+          mac_address = COALESCE(?, mac_address),
+          dst_url     = COALESCE(?, dst_url),
+          challenge   = COALESCE(?, challenge),
+          updated_at  = datetime('now')
+      WHERE id = ?
+    `).run(ip, mac, dst, challenge, row.id);
     db.close();
-    return row2s({ ...row, ip_address: ip, mac_address: mac || row.mac_address, dst_url: dst || row.dst_url });
+    return row2s({
+      ...row,
+      ip_address:  ip,
+      mac_address: mac       || row.mac_address,
+      dst_url:     dst       || row.dst_url,
+      challenge:   challenge || row.challenge,
+    });
   }
 
   const id = uuidv4();
   db.prepare(
-    'INSERT INTO sessions(id,campaign_id,ip_address,mac_address,dst_url,video_watched,survey_done,access_granted) VALUES(?,?,?,?,?,0,0,0)'
-  ).run(id, campaignId, ip, mac, dst);
+    `INSERT INTO sessions
+       (id, campaign_id, ip_address, mac_address, dst_url, challenge,
+        video_watched, survey_done, access_granted)
+     VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0)`
+  ).run(id, campaignId, ip, mac, dst, challenge);
   const created = db.prepare('SELECT * FROM sessions WHERE id=?').get(id);
   db.close();
   return row2s(created);
@@ -84,8 +102,7 @@ function markSurveyDone(id, answers) {
 
 function markAccessGranted(id, hours) {
   const db = getDb();
-  // Use JavaScript Date to avoid SQLite UTC vs localtime confusion
-  const now = new Date();
+  const now     = new Date();
   const expires = new Date(now.getTime() + hours * 3600 * 1000);
   const pad = n => String(n).padStart(2, '0');
   const fmt = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ` +
@@ -93,11 +110,11 @@ function markAccessGranted(id, hours) {
 
   db.prepare(`
     UPDATE sessions
-    SET access_granted=1,
-        granted_at=?,
-        expires_at=?,
-        updated_at=?
-    WHERE id=?
+    SET access_granted = 1,
+        granted_at     = ?,
+        expires_at     = ?,
+        updated_at     = ?
+    WHERE id = ?
   `).run(fmt(now), fmt(expires), fmt(now), id);
   db.close();
 }
