@@ -47,34 +47,49 @@ function pool() {
 const CHILLI_CMD = process.env.CHILLI_QUERY_CMD
   || 'sudo chilli_query -s /var/run/chilli.ipc';
 
-  async function chilliAuthorize(mac, timeoutSeconds = 3600, clientIp = null) {
-    try {
-      let cmd;
-      if (clientIp) {
-        // Preferred: authorize by IP (official chilli_query syntax)
-        cmd = `${CHILLI_CMD} authorize ip ${clientIp} sessiontimeout ${timeoutSeconds} username ${mac}`;
-      } else {
-        // Fallback: try listmac to find the session IP, then authorize by IP
-        const { stdout: listOut } = await execAsync(`${CHILLI_CMD} listmac ${mac}`).catch(() => ({ stdout: '' }));
-        const ipMatch = listOut.match(/\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/);
-        if (ipMatch) {
-          cmd = `${CHILLI_CMD} authorize ip ${ipMatch[1]} sessiontimeout ${timeoutSeconds} username ${mac}`;
-        } else {
-          console.warn(`[CHILLI] No IP found for MAC ${mac} — cannot authorize`);
-          return;
-        }
-      }
-      const { stdout, stderr } = await execAsync(cmd);
-      console.log(`[CHILLI] authorize ${mac}: ${(stdout || stderr || 'ok').trim()}`);
-    } catch (err) {
-      console.warn(`[CHILLI] authorize failed for ${mac}: ${err.message}`);
-    }
-  }
+// Replace chilliAuthorize with this:
+async function chilliAuthorize(mac, timeoutSeconds = 3600, clientIp = null) {
+  try {
+    let ip = clientIp;
 
+    // If no IP provided, look it up from chilli's session table
+    if (!ip) {
+      try {
+        const { stdout } = await execAsync(`${CHILLI_CMD} list`);
+        if (stdout && stdout.trim()) {
+          // list format: MAC IP state sessionid auth username ...
+          const dashMac = mac.replace(/:/g, '-').toUpperCase();
+          const line = stdout.split('\n').find(l =>
+            l.toUpperCase().includes(dashMac) || l.toUpperCase().includes(mac.toUpperCase())
+          );
+          if (line) {
+            const parts = line.trim().split(/\s+/);
+            ip = parts[1]; // second column is IP
+            console.log(`[CHILLI] Resolved IP for ${mac} from list: ${ip}`);
+          }
+        }
+      } catch (e) {
+        console.warn(`[CHILLI] list lookup failed: ${e.message}`);
+      }
+    }
+
+    if (!ip) {
+      console.warn(`[CHILLI] No IP found for ${mac} — authorize skipped. Client must reconnect.`);
+      return;
+    }
+
+    const cmd = `${CHILLI_CMD} authorize ip ${ip} sessiontimeout ${timeoutSeconds} username ${mac}`;
+    const { stdout, stderr } = await execAsync(cmd);
+    const out = (stdout || stderr || '').trim();
+    console.log(`[CHILLI] authorize ${mac} (ip=${ip}): ${out || 'ok'}`);
+  } catch (err) {
+    console.warn(`[CHILLI] authorize failed for ${mac}: ${err.message}`);
+  }
+}
   async function chilliDeauthorize(mac) {
     try {
       // Use 'logout' command with mac keyword — 'deauthorize' may not exist in 1.8
-      const cmd = `${CHILLI_CMD} logout mac ${mac}`;
+      const cmd = `${CHILLI_CMD} logout ${mac}`;
       const { stdout, stderr } = await execAsync(cmd);
       console.log(`[CHILLI] logout ${mac}: ${(stdout || stderr || 'ok').trim()}`);
     } catch (err) {
