@@ -41,7 +41,7 @@ function pool() {
 // ── UAM logon — this is what actually opens internet on CoovaChilli ───────
 // CoovaChilli UAM response formula:
 //   password = MD5(uamsecret + username)       — hex string
-//   response = MD5(challenge_hex + password)   — hex string
+//   response = MD5(challenge_hex + username)   — hex string
 // Then GET http://uamlisten:uamport/logon?username=MAC&response=RESPONSE
 // Chilli returns 302 on success (session moves from dnat → pass).
 async function chilliUamLogon(mac, challenge) {
