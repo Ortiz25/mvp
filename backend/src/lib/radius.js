@@ -1,27 +1,18 @@
 'use strict';
-/**
- * radius.js — CoovaChilli edition
- * Grant/revoke via MariaDB (FreeRADIUS) + chilli_query
- *
- * Socket path: /var/run/chilli.ipc  (not chilli*.sock)
- * chilli_query returns "Timeout" when no clients connected — this is normal.
- */
-
 const mysql     = require('mysql2/promise');
+const http      = require('http');
+const crypto    = require('crypto');
 const { exec }  = require('child_process');
 const util      = require('util');
 const execAsync = util.promisify(exec);
 
-const http = require('http');
-const crypto = require('crypto');
-
-const UAM_SECRET = process.env.UAM_SECRET || 'm0t0m0t0';
-const UAM_URL    = process.env.UAM_URL    || 'http://192.168.182.1:3990';
-
-
+// ── Config ────────────────────────────────────────────────────────────────
+const CHILLI_CMD  = process.env.CHILLI_QUERY_CMD || 'sudo chilli_query -s /var/run/chilli.ipc';
+const UAM_SECRET  = process.env.UAM_SECRET  || 'm0t0m0t0';
+const UAM_HOST    = process.env.UAM_HOST    || '192.168.182.1';
+const UAM_PORT    = parseInt(process.env.UAM_PORT || '3990');
 
 // ── MAC helpers ───────────────────────────────────────────────────────────
-
 function normalizeMac(mac) {
   if (!mac) throw new Error('MAC address required');
   const hex = mac.toUpperCase().replace(/[^A-F0-9]/g, '');
@@ -30,7 +21,6 @@ function normalizeMac(mac) {
 }
 
 // ── MySQL pool ────────────────────────────────────────────────────────────
-
 let _pool = null;
 function pool() {
   if (!_pool) {
@@ -48,111 +38,116 @@ function pool() {
   return _pool;
 }
 
-// ── CoovaChilli helpers ───────────────────────────────────────────────────
+// ── UAM logon — this is what actually opens internet on CoovaChilli ───────
+// CoovaChilli UAM response formula:
+//   password = MD5(uamsecret + username)       — hex string
+//   response = MD5(challenge_hex + password)   — hex string
+// Then GET http://uamlisten:uamport/logon?username=MAC&response=RESPONSE
+// Chilli returns 302 on success (session moves from dnat → pass).
+async function chilliUamLogon(mac, challenge) {
+  if (!challenge) {
+    console.warn(`[UAM] No challenge for ${mac} — skipping UAM logon`);
+    return false;
+  }
+  try {
+    const username = mac; // MAC is the username in CoovaChilli UAM auth
+    const pwHash   = crypto.createHash('md5')
+                           .update(UAM_SECRET + username)
+                           .digest('hex');
+    const response = crypto.createHash('md5')
+                           .update(challenge + pwHash)
+                           .digest('hex');
 
-// Socket path confirmed in production: /var/run/chilli.ipc
-// NOT /var/run/chilli*.sock — that glob matches nothing on this build
-const CHILLI_CMD = process.env.CHILLI_QUERY_CMD
-  || 'sudo chilli_query -s /var/run/chilli.ipc';
+    const path = `/logon?username=${encodeURIComponent(username)}&response=${response}` +
+                 `&userurl=${encodeURIComponent('http://192.168.182.1:3990/loggedin')}`;
 
-// Replace chilliAuthorize with this:
+    console.log(`[UAM] Calling logon for ${mac} (challenge=${challenge.slice(0,8)}...)`);
+
+    return await new Promise((resolve) => {
+      const req = http.request(
+        { host: UAM_HOST, port: UAM_PORT, path, method: 'GET' },
+        (res) => {
+          // Consume response body to free socket
+          res.resume();
+          const ok = res.statusCode === 302 || res.statusCode === 200;
+          console.log(`[UAM] logon ${mac}: HTTP ${res.statusCode} → ${ok ? 'authorized' : 'FAILED'}`);
+          if (!ok) {
+            console.warn(`[UAM] Location: ${res.headers.location || 'none'}`);
+          }
+          resolve(ok);
+        }
+      );
+      req.on('error', (err) => {
+        console.warn(`[UAM] logon request failed for ${mac}: ${err.message}`);
+        resolve(false);
+      });
+      req.setTimeout(5000, () => {
+        console.warn(`[UAM] logon timeout for ${mac}`);
+        req.destroy();
+        resolve(false);
+      });
+      req.end();
+    });
+  } catch (err) {
+    console.warn(`[UAM] logon error for ${mac}: ${err.message}`);
+    return false;
+  }
+}
+
+// ── chilli_query authorize — updates session timeout if already authed ────
 async function chilliAuthorize(mac, timeoutSeconds = 3600, clientIp = null) {
   try {
     let ip = clientIp;
 
-    // If no IP provided, look it up from chilli's session table
+    // If no IP, try to look it up from chilli's session list
     if (!ip) {
       try {
         const { stdout } = await execAsync(`${CHILLI_CMD} list`);
         if (stdout && stdout.trim()) {
-          // list format: MAC IP state sessionid auth username ...
           const dashMac = mac.replace(/:/g, '-').toUpperCase();
           const line = stdout.split('\n').find(l =>
             l.toUpperCase().includes(dashMac) || l.toUpperCase().includes(mac.toUpperCase())
           );
           if (line) {
-            const parts = line.trim().split(/\s+/);
-            ip = parts[1]; // second column is IP
+            ip = line.trim().split(/\s+/)[1];
             console.log(`[CHILLI] Resolved IP for ${mac} from list: ${ip}`);
           }
         }
-      } catch (e) {
-        console.warn(`[CHILLI] list lookup failed: ${e.message}`);
-      }
+      } catch {}
     }
 
     if (!ip) {
-      console.warn(`[CHILLI] No IP found for ${mac} — authorize skipped. Client must reconnect.`);
+      console.warn(`[CHILLI] No IP for ${mac} — skipping chilli_query authorize`);
       return;
     }
 
     const cmd = `${CHILLI_CMD} authorize ip ${ip} sessiontimeout ${timeoutSeconds} username ${mac}`;
     const { stdout, stderr } = await execAsync(cmd);
-    const out = (stdout || stderr || '').trim();
-    console.log(`[CHILLI] authorize ${mac} (ip=${ip}): ${out || 'ok'}`);
+    console.log(`[CHILLI] authorize ${mac} (ip=${ip}): ${(stdout || stderr || 'ok').trim()}`);
   } catch (err) {
     console.warn(`[CHILLI] authorize failed for ${mac}: ${err.message}`);
   }
 }
-  async function chilliDeauthorize(mac) {
-    try {
-      // Use 'logout' command with mac keyword — 'deauthorize' may not exist in 1.8
-      const cmd = `${CHILLI_CMD} logout ${mac}`;
-      const { stdout, stderr } = await execAsync(cmd);
-      console.log(`[CHILLI] logout ${mac}: ${(stdout || stderr || 'ok').trim()}`);
-    } catch (err) {
-      console.warn(`[CHILLI] logout failed for ${mac}: ${err.message}`);
-    }
-  }
 
-  async function chilliUamLogin(mac, challenge) {
-    if (!challenge) {
-      console.warn('[UAM] No challenge — cannot do UAM login for', mac);
-      return false;
-    }
-    try {
-      // CoovaChilli UAM response calculation:
-      // 1. password = MD5(uamsecret + username)  — where username = MAC
-      // 2. response = MD5(challenge_hex + password_hex)
-      const username = mac; // MAC address is the username
-      const pwHash   = crypto.createHash('md5')
-                             .update(UAM_SECRET + username)
-                             .digest('hex');
-      const response = crypto.createHash('md5')
-                             .update(challenge + pwHash)
-                             .digest('hex');
-  
-      const url = `${UAM_URL}/logon?username=${encodeURIComponent(username)}&response=${response}&userurl=${encodeURIComponent('http://192.168.182.1:3990/loggedin')}`;
-      console.log(`[UAM] Calling logon for ${mac}`);
-  
-      return await new Promise((resolve) => {
-        http.get(url, (res) => {
-          let data = '';
-          res.on('data', chunk => data += chunk);
-          res.on('end', () => {
-            console.log(`[UAM] logon response for ${mac}: HTTP ${res.statusCode}`);
-            // CoovaChilli returns 302 to userurl on success
-            resolve(res.statusCode === 302 || res.statusCode === 200);
-          });
-        }).on('error', (err) => {
-          console.warn(`[UAM] logon failed for ${mac}: ${err.message}`);
-          resolve(false);
-        });
-      });
-    } catch (err) {
-      console.warn(`[UAM] logon error for ${mac}: ${err.message}`);
-      return false;
-    }
+async function chilliDeauthorize(mac) {
+  try {
+    // logout takes positional MAC — no 'mac' keyword
+    const cmd = `${CHILLI_CMD} logout ${mac}`;
+    const { stdout, stderr } = await execAsync(cmd);
+    console.log(`[CHILLI] logout ${mac}: ${(stdout || stderr || 'ok').trim()}`);
+  } catch (err) {
+    console.warn(`[CHILLI] logout failed for ${mac}: ${err.message}`);
   }
+}
+
 // ── Public API ────────────────────────────────────────────────────────────
-
 async function grantAccess(mac, hours = 1, clientIp = null, challenge = null) {
   const normMac = normalizeMac(mac);
   const dashMac = normMac.replace(/:/g, '-');
   const timeout = hours * 3600;
   const db = pool();
 
-  // Write to RADIUS DB (for session persistence across restarts)
+  // Write RADIUS DB entries (persists auth across chilli restarts)
   for (const username of [normMac, dashMac]) {
     await db.execute(
       `INSERT INTO radcheck (username, attribute, op, value)
@@ -168,10 +163,10 @@ async function grantAccess(mac, hours = 1, clientIp = null, challenge = null) {
     );
   }
 
-  // Primary: UAM logon (actually authorizes the live chilli session)
-  const uamOk = await chilliUamLogin(normMac, challenge);
-  
-  // Fallback: chilli_query authorize (updates timeout if session already authed)
+  // Step 1: UAM logon — this is what actually moves chilli session to 'pass'
+  const uamOk = await chilliUamLogon(normMac, challenge);
+
+  // Step 2: chilli_query authorize — sets/updates the session timeout
   await chilliAuthorize(normMac, timeout, clientIp);
 
   console.log(`✅ Access granted: ${normMac} | hours=${hours} | uam=${uamOk}`);
@@ -183,7 +178,6 @@ async function revokeAccess(mac) {
   const dashMac = normMac.replace(/:/g, '-');
   const db = pool();
 
-  // Remove both formats
   for (const username of [normMac, dashMac]) {
     await db.execute('DELETE FROM radcheck WHERE username = ?', [username]);
     await db.execute('DELETE FROM radreply  WHERE username = ?', [username]);
@@ -193,6 +187,7 @@ async function revokeAccess(mac) {
   console.log(`🗑 Access revoked: ${normMac}`);
   return { ok: true };
 }
+
 async function testConnection() {
   try {
     const db = pool();
@@ -209,7 +204,7 @@ async function listAuthorizedClients() {
     if (!stdout || stdout.includes('Timeout')) return [];
     return stdout.trim().split('\n').filter(Boolean).map(line => {
       const parts = line.trim().split(/\s+/);
-      return { mac: parts[0], ip: parts[1] };
+      return { mac: parts[0], ip: parts[1], state: parts[2], authenticated: parts[4] === '1' };
     });
   } catch {
     return [];
@@ -221,10 +216,6 @@ function buildLogoutUrl(_mac) {
 }
 
 module.exports = {
-  grantAccess,
-  revokeAccess,
-  testConnection,
-  listAuthorizedClients,
-  buildLogoutUrl,
-  normalizeMac,
+  grantAccess, revokeAccess, testConnection,
+  listAuthorizedClients, buildLogoutUrl, normalizeMac,
 };
