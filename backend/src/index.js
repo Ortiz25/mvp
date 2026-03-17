@@ -1,7 +1,7 @@
 'use strict';
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 
-const { cleanupExpiredSessions, restoreActiveSessionRules } = require('./lib/sessionCleanup');
+const { cleanupExpiredSessions} = require('./lib/sessionCleanup');
 
 const express   = require('express');
 const cors      = require('cors');
@@ -18,19 +18,11 @@ const IS_DEV   = NODE_ENV !== 'production';
 
 // ── Bootstrap DB ──────────────────────────────────────────────────────────
 migrate();
-restoreActiveSessionRules();
 
-// Startup: restore rules for sessions that survived a reboot/restart
-// AND revoke any that expired during downtime
-setTimeout(async () => {
-  console.log('[STARTUP] Running session cleanup and rule restore...');
-  await restoreActiveSessionRules();  // restore first
-  await cleanupExpiredSessions();     // then revoke expired
-}, 5000);
+
 
 // Every 60 seconds: restore missing rules AND revoke expired sessions
 setInterval(async () => {
-  await restoreActiveSessionRules();  // restore first (handles iptables flushes)
   await cleanupExpiredSessions();     // then revoke expired
 }, 60 * 1000);
 

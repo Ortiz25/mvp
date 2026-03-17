@@ -47,56 +47,60 @@ function pool() {
 const CHILLI_CMD = process.env.CHILLI_QUERY_CMD
   || 'sudo chilli_query -s /var/run/chilli.ipc';
 
-async function chilliAuthorize(mac, timeoutSeconds = 3600) {
-  try {
-    // Format: chilli_query authorize <MAC> <up_bw> <down_bw> <timeout>
-    // 0 0 = unlimited bandwidth
-    const cmd = `${CHILLI_CMD} authorize ${mac} 0 0 ${timeoutSeconds}`;
-    const { stdout, stderr } = await execAsync(cmd);
-    // "Timeout" in stdout = no active session for this MAC yet = normal
-    // chilli_query authorize is silently ignored if MAC is unknown to chilli
-    // (client must have connected and received DHCP first)
-    console.log(`[CHILLI] authorize ${mac}: ${(stdout || stderr || 'ok').trim()}`);
-  } catch (err) {
-    console.warn(`[CHILLI] authorize failed for ${mac}: ${err.message}`);
+  async function chilliAuthorize(mac, timeoutSeconds = 3600) {
+    try {
+      // chilli_query 1.8 syntax: named keyword arguments
+      // 'authorize' requires 'mac' keyword, NOT positional MAC
+      const cmd = `${CHILLI_CMD} authorize mac ${mac} sessiontimeout ${timeoutSeconds}`;
+      const { stdout, stderr } = await execAsync(cmd);
+      const out = (stdout || stderr || '').trim();
+      if (out && !out.toLowerCase().includes('unknown')) {
+        console.log(`[CHILLI] authorize ${mac}: ${out}`);
+      } else if (out) {
+        console.warn(`[CHILLI] authorize warning for ${mac}: ${out}`);
+      } else {
+        console.log(`[CHILLI] authorize ${mac}: ok`);
+      }
+    } catch (err) {
+      console.warn(`[CHILLI] authorize failed for ${mac}: ${err.message}`);
+    }
   }
-}
 
-async function chilliDeauthorize(mac) {
-  try {
-    const cmd = `${CHILLI_CMD} deauthorize ${mac}`;
-    const { stdout, stderr } = await execAsync(cmd);
-    console.log(`[CHILLI] deauthorize ${mac}: ${(stdout || stderr || 'ok').trim()}`);
-  } catch (err) {
-    // Not an error if MAC wasn't active
-    console.warn(`[CHILLI] deauthorize failed for ${mac}: ${err.message}`);
+  async function chilliDeauthorize(mac) {
+    try {
+      // Use 'logout' command with mac keyword — 'deauthorize' may not exist in 1.8
+      const cmd = `${CHILLI_CMD} logout mac ${mac}`;
+      const { stdout, stderr } = await execAsync(cmd);
+      console.log(`[CHILLI] logout ${mac}: ${(stdout || stderr || 'ok').trim()}`);
+    } catch (err) {
+      console.warn(`[CHILLI] logout failed for ${mac}: ${err.message}`);
+    }
   }
-}
-
 // ── Public API ────────────────────────────────────────────────────────────
 
-async function grantAccess(mac, hours = 1) {
-  const normMac = normalizeMac(mac);
+async function grantAccess(mac, hours = 1, clientIp = null) {
+  const normMac = normalizeMac(mac);           // colon: 08:31:8B:90:50:F8
+  const dashMac = normMac.replace(/:/g, '-');  // dash:  08-31-8B-90-50-F8
   const timeout = hours * 3600;
   const db = pool();
 
-  // Insert into FreeRADIUS DB — chilli reads this on next RADIUS request
-  await db.execute(
-    `INSERT INTO radcheck (username, attribute, op, value)
-       VALUES (?, 'Auth-Type', ':=', 'Accept')
-     ON DUPLICATE KEY UPDATE value = VALUES(value)`,
-    [normMac]
-  );
+  // Insert BOTH formats — chilli sends dash format to RADIUS
+  for (const username of [normMac, dashMac]) {
+    await db.execute(
+      `INSERT INTO radcheck (username, attribute, op, value)
+         VALUES (?, 'Auth-Type', ':=', 'Accept')
+       ON DUPLICATE KEY UPDATE value = VALUES(value)`,
+      [username]
+    );
+    await db.execute(
+      `INSERT INTO radreply (username, attribute, op, value)
+         VALUES (?, 'Session-Timeout', ':=', ?)
+       ON DUPLICATE KEY UPDATE value = VALUES(value)`,
+      [username, String(timeout)]
+    );
+  }
 
-  await db.execute(
-    `INSERT INTO radreply (username, attribute, op, value)
-       VALUES (?, 'Session-Timeout', ':=', ?)
-     ON DUPLICATE KEY UPDATE value = VALUES(value)`,
-    [normMac, String(timeout)]
-  );
-
-  // Tell CoovaChilli to open the firewall for this MAC immediately
-  await chilliAuthorize(normMac, timeout);
+  await chilliAuthorize(normMac, timeout, clientIp);
 
   console.log(`✅ Access granted: ${normMac} | hours=${hours}`);
   return { ok: true, mock: false, mac: normMac };
@@ -104,17 +108,19 @@ async function grantAccess(mac, hours = 1) {
 
 async function revokeAccess(mac) {
   const normMac = normalizeMac(mac);
+  const dashMac = normMac.replace(/:/g, '-');
   const db = pool();
 
-  await db.execute('DELETE FROM radcheck WHERE username = ?', [normMac]);
-  await db.execute('DELETE FROM radreply  WHERE username = ?', [normMac]);
+  // Remove both formats
+  for (const username of [normMac, dashMac]) {
+    await db.execute('DELETE FROM radcheck WHERE username = ?', [username]);
+    await db.execute('DELETE FROM radreply  WHERE username = ?', [username]);
+  }
 
   await chilliDeauthorize(normMac);
-
   console.log(`🗑 Access revoked: ${normMac}`);
   return { ok: true };
 }
-
 async function testConnection() {
   try {
     const db = pool();
@@ -127,15 +133,12 @@ async function testConnection() {
 
 async function listAuthorizedClients() {
   try {
-    // Use chilli_query for live session list
     const { stdout } = await execAsync(`${CHILLI_CMD} list`);
     if (!stdout || stdout.includes('Timeout')) return [];
-    return stdout.trim().split('\n')
-      .filter(Boolean)
-      .map(line => {
-        const parts = line.trim().split(/\s+/);
-        return { mac: parts[0], ip: parts[1] };
-      });
+    return stdout.trim().split('\n').filter(Boolean).map(line => {
+      const parts = line.trim().split(/\s+/);
+      return { mac: parts[0], ip: parts[1] };
+    });
   } catch {
     return [];
   }

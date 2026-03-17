@@ -1,23 +1,27 @@
 'use strict';
 /**
- * portal.js — Pi-as-router edition
+ * portal.js — CoovaChilli edition
  *
  * Grant flow:
  *   1. Frontend POST /api/:slug/access/grant { sessionId }
  *   2. Backend → radius.grantAccess(mac, hours)
  *        a. INSERT into radcheck (Auth-Type = Accept)
  *        b. INSERT into radreply (Session-Timeout = seconds)
- *        c. iptables -I authorized_clients — opens firewall immediately
+ *        c. chilli_query authorize <MAC> 0 0 <timeout>
  *   3. Frontend navigates to /connecting
- *   4. ConnectingPage navigates to http://neverssl.com
- *   5. OS connectivity check passes → captive portal WebView dismissed
+ *   4. ConnectingPage navigates to http://192.168.182.1:3990/loggedin
+ *   5. CoovaChilli returns real response for authorized MAC
+ *   6. OS captive portal WebView dismissed
  *
  * MAC resolution order:
- *   1. ?mac= or ?username= query param (MikroTik hotspot substitution)
- *   2. Pi ARP table lookup by client IP (arp -n <ip>)
+ *   1. ?mac= or ?username= query param (top-level — standard path)
+ *   2. ?loginurl= query param — CoovaChilli wraps its redirect as:
+ *      /?loginurl=http://192.168.182.1/?res=notyet&mac=XX&ip=YY&...
+ *      The MAC is inside the loginurl value, not at the top level.
+ *   3. Pi ARP table lookup by client IP (arp -n <ip>) — fallback
  */
-const express = require('express');
-const router  = express.Router();
+const express  = require('express');
+const router   = express.Router();
 const { exec } = require('child_process');
 
 const { grantAccess } = require('../lib/radius');
@@ -30,8 +34,8 @@ const {
 // Sentinel values that must never be used as redirect destinations
 const DST_SENTINELS = [
   'captive.local',
-  '192.168.100.1',   // old — keep for safety
-  '192.168.182.1',   // ← add: CoovaChilli UAM IP
+  '192.168.100.1',  // old iptables subnet
+  '192.168.182.1',  // CoovaChilli UAM IP — never redirect back to portal
   '192.168.88.1', '192.168.88.2',
   '/gen_204', '/generate_204', '/connecttest', '/ncsi',
   '/hotspot-detect', '/canonical.html', 'hotspot/login', '/login',
@@ -57,10 +61,58 @@ function getClientIp(req) {
 }
 
 /**
+ * extractCoovaParams(query)
+ *
+ * CoovaChilli redirects unauthenticated clients to:
+ *   http://192.168.182.1/?loginurl=http%3a%2f%2f192.168.182.1%2f%3f
+ *     res%3dnotyet%26uamip%3d192.168.182.1%26uamport%3d3990
+ *     %26mac%3d08-31-8B-90-50-F8%26ip%3d192.168.182.50
+ *     %26userurl%3dhttp%253a%252f%252f...
+ *
+ * The MAC, IP, and original URL are inside the loginurl value.
+ * This function extracts them from the nested URL.
+ *
+ * Note: CoovaChilli formats MAC with dashes (08-31-8B-90-50-F8).
+ * normalizeMac() in radius.js handles both dash and colon formats.
+ */
+function extractCoovaParams(query) {
+  const result = { mac: null, ip: null, dst: null };
+
+  const loginurl = query.loginurl;
+  if (!loginurl) return result;
+
+  try {
+    // loginurl may be single or double encoded
+    let decoded = loginurl;
+    try { decoded = decodeURIComponent(decoded); } catch {}
+    try { decoded = decodeURIComponent(decoded); } catch {}
+
+    // Parse the inner URL's query string
+    const qstart = decoded.indexOf('?');
+    if (qstart === -1) return result;
+
+    const inner = new URLSearchParams(decoded.slice(qstart + 1));
+
+    result.mac = inner.get('mac') || inner.get('username') || null;
+    result.ip  = inner.get('ip')  || null;
+    result.dst = sanitizeDst(
+      inner.get('userurl') || inner.get('dst') || inner.get('link-orig') || null
+    );
+
+    if (result.mac) {
+      console.log(`[COOVA] Extracted from loginurl — mac=${result.mac} ip=${result.ip}`);
+    }
+  } catch (err) {
+    console.warn('[COOVA] Failed to parse loginurl:', err.message);
+  }
+
+  return result;
+}
+
+/**
  * getMacFromArp(ip)
- * Looks up client MAC from the Pi's ARP table using `arp -n <ip>`.
- * This works because the Pi is the router — all client traffic passes through it.
- * Returns null on any failure (always non-fatal).
+ * Fallback MAC resolution via the Pi's ARP table.
+ * Works because CoovaChilli routes all client traffic through tun0/eth1.
  */
 function getMacFromArp(ip) {
   return new Promise((resolve) => {
@@ -68,8 +120,7 @@ function getMacFromArp(ip) {
 
     exec(`arp -n ${ip}`, (err, stdout) => {
       if (err) return resolve(null);
-      // arp -n output: "192.168.100.50 ether aa:bb:cc:dd:ee:ff C eth1"
-      const match = stdout.match(/([0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2})/i);
+      const match = stdout.match(/([0-9a-f]{2}[:\-][0-9a-f]{2}[:\-][0-9a-f]{2}[:\-][0-9a-f]{2}[:\-][0-9a-f]{2}[:\-][0-9a-f]{2})/i);
       if (match) {
         console.log(`[ARP] Resolved ${ip} → ${match[1]}`);
         return resolve(match[1]);
@@ -101,7 +152,9 @@ router.get('/client-mac', async (req, res) => {
   const ip = getClientIp(req);
   if (!ip) return res.status(400).json({ error: 'Cannot determine client IP' });
   const mac = await getMacFromArp(ip);
-  if (!mac) return res.status(404).json({ error: 'MAC not found in ARP table — reconnect to Wi-Fi and try again' });
+  if (!mac) return res.status(404).json({
+    error: 'MAC not found in ARP table — reconnect to Wi-Fi and try again',
+  });
   res.json({ mac, ip });
 });
 
@@ -110,10 +163,22 @@ router.get('/:slug/status', async (req, res) => {
   const c = getCampaignBySlug(req.params.slug);
   if (!c) return res.status(404).json({ error: 'Campaign not found' });
 
-  const ip  = req.query.ip || getClientIp(req);
-  let   mac = req.query.mac || req.query.username || null;
-  const dst = sanitizeDst(req.query.dst || req.query['link-orig'] || null);
+  const ip = req.query.ip || getClientIp(req);
 
+  // MAC resolution: top-level params → loginurl params → ARP
+  let mac = req.query.mac || req.query.username || null;
+  let dst = sanitizeDst(
+    req.query.dst || req.query['link-orig'] || req.query.userurl || null
+  );
+
+  // CoovaChilli path — params are nested inside loginurl
+  if (!mac && req.query.loginurl) {
+    const coova = extractCoovaParams(req.query);
+    mac = coova.mac || mac;
+    dst = dst || coova.dst;
+  }
+
+  // ARP fallback
   if (!mac && ip) mac = await getMacFromArp(ip);
 
   console.log(`[STATUS] slug=${req.params.slug} ip=${ip} mac=${mac} dst=${dst}`);
@@ -150,13 +215,16 @@ router.get('/:slug/config', (req, res) => {
     video: v ? {
       id: v.id, title: v.title,
       url: `/media/${c.id}/${v.filename}`,
-      thumbnailUrl: v.thumbnail_filename ? `/media/${c.id}/${v.thumbnail_filename}` : null,
-      durationSeconds: v.duration_seconds,
+      thumbnailUrl: v.thumbnail_filename
+        ? `/media/${c.id}/${v.thumbnail_filename}` : null,
+      durationSeconds:  v.duration_seconds,
       requiredWatchPct: v.required_watch_pct,
     } : null,
     survey: s ? {
       id: s.id, title: s.title,
-      questions: s.questions.map(q => ({ id: q.id, text: q.question, options: q.options })),
+      questions: s.questions.map(q => ({
+        id: q.id, text: q.question, options: q.options,
+      })),
     } : null,
   });
 });
@@ -170,7 +238,9 @@ router.post('/:slug/video/complete', (req, res) => {
   const cfg      = getCampaignConfig(req.params.slug);
   const required = cfg?.video?.required_watch_pct || 0.8;
   if ((watchedPct || 0) < required)
-    return res.status(403).json({ error: 'Insufficient watch time', required, watched: watchedPct });
+    return res.status(403).json({
+      error: 'Insufficient watch time', required, watched: watchedPct,
+    });
   markVideoWatched(sessionId);
   res.json({ success: true });
 });
@@ -203,16 +273,20 @@ router.post('/:slug/access/grant', async (req, res) => {
   let   mac   = session.mac_address;
   const hours = c.session_hours || 1;
 
-  // Last-chance MAC resolution via Pi ARP table
+  // Last-chance MAC resolution via ARP
   if (!mac) {
     const ip = getClientIp(req);
-    if (ip) mac = await getMacFromArp(ip);
+    if (ip) {
+      console.log(`[GRANT] No MAC in session — trying ARP for ${ip}`);
+      mac = await getMacFromArp(ip);
+    }
   }
 
   if (!mac) {
     console.error('⚠ Grant failed: no MAC for session', sessionId);
     return res.status(400).json({
-      error: 'Cannot grant access: MAC address unknown. Please reconnect to Wi-Fi and try again.',
+      error: 'Cannot grant access: MAC address unknown. ' +
+             'Please reconnect to Wi-Fi and try again.',
     });
   }
 

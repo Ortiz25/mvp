@@ -16,6 +16,12 @@ server {
     # POST-AUTH: iptables RETURN rule bypasses this block entirely,
     #            probe reaches real Google/Apple and gets real 204 → Wi-Fi icon updates
 
+    # Huawei connectivity check
+location ~* /generate_204 { return 302 http://192.168.182.1/; }
+location = /generate_204_6cb7e7df-89d4-4c90-a3a1-0de130c0b1e2 {
+    return 302 http://192.168.182.1/;
+}
+
     # Android / Google
     location = /generate_204         { return 302 http://captive.local/; }
     location = /gen_204              { return 302 http://captive.local/; }

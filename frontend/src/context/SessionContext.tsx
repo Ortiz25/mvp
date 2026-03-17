@@ -45,14 +45,32 @@ function sanitizeDst(raw: string | null): string | null {
 function readHotspotParams(): HotspotParams {
   if (_cached) return _cached;
 
-  const p   = new URLSearchParams(window.location.search);
-  const mac = p.get('mac') || p.get('username') || null;
-  const ip  = p.get('ip') || null;
-  // CoovaChilli passes original URL as 'userurl'
-  // MikroTik uses 'dst' or 'link-orig'
-  const dst = sanitizeDst(
-    p.get('dst') || p.get('link-orig') || p.get('userurl') || null
-  );
+  const p = new URLSearchParams(window.location.search);
+
+  // CoovaChilli passes params wrapped in loginurl=
+  // e.g. /?loginurl=http://192.168.182.1/?mac=XX&ip=YY&userurl=ZZ
+  let mac = p.get('mac') || p.get('username') || null;
+  let ip  = p.get('ip') || null;
+  let dst = p.get('dst') || p.get('link-orig') || p.get('userurl') || null;
+
+  // If mac not at top level, extract from loginurl param
+  if (!mac) {
+    const loginurl = p.get('loginurl');
+    if (loginurl) {
+      try {
+        const inner = new URL(decodeURIComponent(loginurl));
+        const ip2 = new URLSearchParams(inner.search);
+        mac = ip2.get('mac') || ip2.get('username') || null;
+        ip  = ip  || ip2.get('ip') || null;
+        dst = dst || ip2.get('userurl') || ip2.get('dst') || null;
+        console.log('[Hotspot] Params extracted from loginurl:', { mac, ip, dst });
+      } catch (e) {
+        console.warn('[Hotspot] Failed to parse loginurl:', e);
+      }
+    }
+  }
+
+  dst = sanitizeDst(dst);
 
   if (mac) {
     const params: HotspotParams = { mac, ip, dst };
@@ -62,19 +80,19 @@ function readHotspotParams(): HotspotParams {
     return params;
   }
 
+  // Fall back to sessionStorage
   try {
     const stored = sessionStorage.getItem(SS_KEY);
     if (stored) {
       const p2 = JSON.parse(stored) as HotspotParams;
       if (p2.mac) {
         _cached = p2;
-        console.log('[Hotspot] Params from sessionStorage:', p2);
         return p2;
       }
     }
   } catch {}
 
-  console.log('[Hotspot] No params — will resolve MAC from /status (ARP)');
+  console.log('[Hotspot] No params — will resolve MAC via ARP from /status');
   return { mac: null, ip: null, dst: null };
 }
 
