@@ -2,6 +2,7 @@
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 
 const { cleanupExpiredSessions} = require('./lib/sessionCleanup');
+const servicesRouter = require('./routes/services');
 
 const express   = require('express');
 const cors      = require('cors');
@@ -19,7 +20,7 @@ const IS_DEV   = NODE_ENV !== 'production';
 // ── Bootstrap DB ──────────────────────────────────────────────────────────
 migrate();
 
-
+app.use('/api/services', servicesRouter);
 
 // Every 60 seconds: restore missing rules AND revoke expired sessions
 setInterval(async () => {

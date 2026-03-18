@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect} from 'react';
 import {
   IconBook, IconGlobe, IconMapPin, IconHeartbeat, IconUsers,
   IconSignal, IconExternalLink, IconArrow, IconZap, IconStar
@@ -26,26 +26,25 @@ const APPS: App[] = [
     name: 'Kolibri',
     tagline: 'Learn anything, offline',
     desc: 'Khan Academy, CK-12, and thousands of courses — all without internet.',
-    url: 'http://kolibri.local',
+    url: 'http://kolibri.local',         // ← resolves via dnsmasq
     Icon: IconBook,
     category: 'education',
     accent: 'violet',
-    available: true,
+    available: true,   // overridden by live status check
     featured: true,
   },
   {
-    id: 'wikipedia',
+    id: 'kiwix',
     name: 'Wikipedia',
     tagline: 'The world\'s encyclopedia',
     desc: 'Full offline Wikipedia via Kiwix. Browse millions of articles.',
-    url: 'http://kiwix.local',
+    url: 'http://kiwix.local',           // ← resolves via dnsmasq
     Icon: IconGlobe,
     category: 'info',
     accent: 'sky',
     available: true,
     featured: true,
-  },
-  {
+  },{
     id: 'community',
     name: 'Community Board',
     tagline: 'Local notices & events',
@@ -185,7 +184,25 @@ function AppRow({ app, delay = 0 }: { app: App; delay?: number }) {
 
 export function OfflinePage() {
   const [category, setCategory] = useState<AppCategory>('all');
+   // Add at top of OfflinePage component:
+const [serviceStatus, setServiceStatus] = useState<Record<string, boolean>>({});
 
+useEffect(() => { 
+  fetch('/api/services/status')
+    .then(r => r.json())
+    .then((data: {id: string, available: boolean}[]) => {
+      const map: Record<string, boolean> = {};
+      data.forEach(s => { map[s.id] = s.available; });
+      setServiceStatus(map);
+    })
+    .catch(() => {});
+}, []);
+
+// Then in APPS array, override available based on live status:
+const appsWithStatus = APPS.map(app => ({
+  ...app,
+  available: serviceStatus[app.id] ?? app.available,
+}));
   const featured  = APPS.filter(a => a.featured);
   const rest      = APPS.filter(a => !a.featured && (category === 'all' || a.category === category));
   const available = APPS.filter(a => a.available).length;
