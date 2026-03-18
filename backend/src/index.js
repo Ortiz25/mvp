@@ -20,7 +20,7 @@ const IS_DEV   = NODE_ENV !== 'production';
 // ── Bootstrap DB ──────────────────────────────────────────────────────────
 migrate();
 
-app.use('/api/services', servicesRouter);
+
 
 // Every 60 seconds: restore missing rules AND revoke expired sessions
 setInterval(async () => {
@@ -61,7 +61,7 @@ app.use('/api/', rateLimit({
 const MEDIA_DIR = process.env.MEDIA_DIR || path.join(__dirname, '../media');
 app.use('/media',   express.static(MEDIA_DIR));
 app.use('/uploads', express.static(MEDIA_DIR));
-
+app.use('/api/services', servicesRouter);
 // ── Health ────────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({
   status: 'ok',

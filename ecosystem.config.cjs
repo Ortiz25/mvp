@@ -1,4 +1,5 @@
-apps: [{
+{
+  apps: [{
   name:        'captive-api',
   script:      './backend/src/index.js',
   cwd:         '/home/admin/apps/captive-portal',
