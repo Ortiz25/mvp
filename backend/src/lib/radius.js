@@ -147,32 +147,53 @@ async function grantAccess(mac, hours = 1, clientIp = null, challenge = null) {
   const timeout = hours * 3600;
   const db = pool();
 
-  // Write RADIUS DB entries (persists auth across chilli restarts)
-  for (const username of [normMac, dashMac]) {
-    await db.execute(
-      `INSERT INTO radcheck (username, attribute, op, value)
-         VALUES (?, 'Auth-Type', ':=', 'Accept')
-       ON DUPLICATE KEY UPDATE value = VALUES(value)`,
-      [username]
-    );
-    await db.execute(
-      `INSERT INTO radreply (username, attribute, op, value)
-         VALUES (?, 'Session-Timeout', ':=', ?)
-       ON DUPLICATE KEY UPDATE value = VALUES(value)`,
-      [username, String(timeout)]
-    );
+  // Write RADIUS DB entries with deadlock retry
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const conn = await db.getConnection();
+      try {
+        await conn.beginTransaction();
+        for (const username of [normMac, dashMac]) {
+          await conn.execute(
+            `INSERT INTO radcheck (username, attribute, op, value)
+               VALUES (?, 'Auth-Type', ':=', 'Accept')
+             ON DUPLICATE KEY UPDATE value = VALUES(value)`,
+            [username]
+          );
+          await conn.execute(
+            `INSERT INTO radreply (username, attribute, op, value)
+               VALUES (?, 'Session-Timeout', ':=', ?)
+             ON DUPLICATE KEY UPDATE value = VALUES(value)`,
+            [username, String(timeout)]
+          );
+        }
+        await conn.commit();
+        break; // success — exit retry loop
+      } catch (err) {
+        await conn.rollback();
+        if (err.errno === 1213 && attempt < 2) {
+          // Deadlock — wait briefly and retry
+          await new Promise(r => setTimeout(r, 100 * (attempt + 1)));
+          continue;
+        }
+        throw err;
+      } finally {
+        conn.release();
+      }
+    } catch (err) {
+      if (attempt === 2) console.warn(`[RADIUS] DB write failed after 3 attempts: ${err.message}`);
+    }
   }
 
-  // Step 1: UAM logon — this is what actually moves chilli session to 'pass'
+  // Step 1: UAM logon
   const uamOk = await chilliUamLogon(normMac, challenge);
 
-  // Step 2: chilli_query authorize — sets/updates the session timeout
+  // Step 2: chilli_query authorize
   await chilliAuthorize(normMac, timeout, clientIp);
 
   console.log(`✅ Access granted: ${normMac} | hours=${hours} | uam=${uamOk}`);
   return { ok: true, mock: false, mac: normMac };
 }
-
 async function revokeAccess(mac) {
   const normMac = normalizeMac(mac);
   const dashMac = normMac.replace(/:/g, '-');
