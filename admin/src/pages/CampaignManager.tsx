@@ -401,8 +401,8 @@ function CampaignForm({
     description:   initial?.description  ?? '',
     active:        initial?.active       ?? 1,
     session_hours: initial?.session_hours ?? 8,
-    starts_at:     initial?.starts_at    ?? '',
-    ends_at:       initial?.ends_at      ?? '',
+    start_date:     initial?.starts_at    ?? '',
+    end_date:       initial?.ends_at      ?? '',
   });
 
   const upd = (k: string, v: unknown) => setForm(f => ({ ...f, [k]: v }));
@@ -416,14 +416,16 @@ function CampaignForm({
         c = await api.updateCampaign(initial.id, {
           name: form.name, description: form.description,
           active: form.active, session_hours: form.session_hours,
-          starts_at: form.starts_at || null, ends_at: form.ends_at || null,
+          start_date: form.start_date || null,   // ← was starts_at
+          end_date:   form.end_date   || null,   // ← was ends_at
         });
       } else {
         const slug = form.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
         c = await api.createCampaign({
           slug, name: form.name, description: form.description,
           active: form.active, session_hours: form.session_hours,
-          starts_at: form.starts_at || null, ends_at: form.ends_at || null,
+          start_date: form.start_date || null,   // ← was starts_at
+          end_date:   form.end_date   || null,   // ← was ends_at
         });
       }
       setSaved(c);
@@ -513,12 +515,12 @@ function CampaignForm({
                 <div>
                   <FieldLabel>Starts At</FieldLabel>
                   <input type="datetime-local" className="input"
-                    value={form.starts_at} onChange={e => upd('starts_at', e.target.value)} />
+  value={form.start_date} onChange={e => upd('start_date', e.target.value)} />
                 </div>
                 <div>
                   <FieldLabel>Ends At</FieldLabel>
                   <input type="datetime-local" className="input"
-                    value={form.ends_at} onChange={e => upd('ends_at', e.target.value)} />
+  value={form.end_date} onChange={e => upd('end_date', e.target.value)} />
                 </div>
               </div>
             </div>

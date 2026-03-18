@@ -22,7 +22,7 @@ export interface Campaign {
   id: string; slug: string; name: string; description: string;
   sponsor: string | null; primary_color: string; accent_color: string;
   bg_color: string; session_hours: number; active: number;
-  starts_at: string | null; ends_at: string | null;
+  start_date: string | null; end_date: string | null;
   created_at: string; updated_at: string;
   video_required_pct: number; video_duration: number;
   video_filename: string | null; video_original: string | null;
