@@ -1,40 +1,50 @@
 'use strict';
 /**
- * portal.js — CoovaChilli edition
+ * portal.js — public-facing portal API routes
  *
- * MAC resolution order (status + grant):
- *   1. ?mac= top-level query param
- *   2. loginurl inner params (CoovaChilli redirect path)
+ * MAC resolution layers (in order):
+ *   1. ?mac= query param (from CoovaChilli loginurl)
+ *   2. ?loginurl= nested params
  *   3. chilli_query list (most reliable — chilli owns the DHCP leases)
- *   4. Pi ARP table (last resort)
- *
- * Challenge resolution order (grant):
- *   1. session.challenge — stored when loginurl was first parsed
- *   2. req.body.challenge — sent by frontend if new SessionContext deployed
- *
- * The challenge is the CoovaChilli UAM token used to compute the logon
- * response that moves a session from dnat → pass state.
+ *   4. OS ARP table (fallback)
  */
-const express  = require('express');
-const router   = express.Router();
+
+const express = require('express');
+const router  = express.Router();
 const { exec } = require('child_process');
 
-const { grantAccess }    = require('../lib/radius');
-const { getAllCampaigns, getCampaignBySlug, getCampaignConfig } = require('../lib/campaigns');
 const {
-  getOrCreateSession, getSession, isSessionActive,
+  getAllCampaigns, getCampaignBySlug, getCampaignConfig,
+} = require('../lib/campaigns');
+
+const {
+  getOrCreateSession, getSession, getDb,
   markVideoWatched, markSurveyDone, markAccessGranted,
+  isSessionActive, getAllSessions,
 } = require('../lib/sessions');
+
+const { grantAccess } = require('../lib/radius');
 
 const CHILLI_IPC = process.env.CHILLI_QUERY_CMD || 'sudo chilli_query -s /var/run/chilli.ipc';
 
-// ── Sentinel dst values that must never be used as redirects ──────────────
+// ── Helpers ───────────────────────────────────────────────────────────────
+
+function getClientIp(req) {
+  return (
+    (req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
+    (req.headers['x-real-ip']       || '').split(',')[0].trim() ||
+    req.ip || null
+  );
+}
+
+// Sentinel values that indicate a probe/redirect URL, not a real dst
 const DST_SENTINELS = [
   'captive.local', '192.168.100.1', '192.168.182.1',
   '192.168.88.1', '192.168.88.2',
   '/gen_204', '/generate_204', '/connecttest', '/ncsi',
   '/hotspot-detect', '/canonical.html', 'hotspot/login', '/login',
-  'neverssl.com', 'example.com', 'google.com', 'generate_204', 'loggedin',
+  'neverssl.com', 'example.com', 'google.com',
+  'generate_204', 'loggedin',
 ];
 
 function sanitizeDst(raw) {
@@ -47,66 +57,44 @@ function sanitizeDst(raw) {
   return d;
 }
 
-function getClientIp(req) {
-  return (
-    (req.headers['x-real-ip']       || '').split(',')[0].trim() ||
-    (req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
-    req.ip || null
-  );
-}
-
-// ── extractCoovaParams ────────────────────────────────────────────────────
-// CoovaChilli redirects to:
-//   /?loginurl=http://192.168.182.1/?res=notyet&challenge=XXX
-//              &mac=08-31-8B-90-50-F8&ip=192.168.182.50
-//              &sessionid=SSSS&userurl=...
-// Everything we need is inside the loginurl value.
+// Extract MAC/challenge/etc from CoovaChilli loginurl param
+//   /?loginurl=http://192.168.182.1/?res=notyet&challenge=XXX&mac=YY...
 function extractCoovaParams(query) {
   const result = { mac: null, ip: null, dst: null, challenge: null, chilliSid: null };
   const loginurl = query.loginurl;
   if (!loginurl) return result;
-
   try {
     let decoded = loginurl;
     try { decoded = decodeURIComponent(decoded); } catch {}
     try { decoded = decodeURIComponent(decoded); } catch {}
-
     const qstart = decoded.indexOf('?');
-    if (qstart === -1) return result;
-
-    const inner = new URLSearchParams(decoded.slice(qstart + 1));
-
-    result.mac       = inner.get('mac') || inner.get('username') || null;
-    result.ip        = inner.get('ip')  || null;
-    result.challenge = inner.get('challenge') || null;
-    result.chilliSid = inner.get('sessionid') || null;
-    result.dst       = sanitizeDst(
-      inner.get('userurl') || inner.get('dst') || inner.get('link-orig') || null
-    );
-
-    if (result.mac || result.challenge) {
+    if (qstart !== -1) {
+      const inner = new URLSearchParams(decoded.slice(qstart + 1));
+      result.mac       = inner.get('mac') || inner.get('username') || null;
+      result.ip        = inner.get('ip')  || null;
+      result.challenge = inner.get('challenge') || null;
+      result.chilliSid = inner.get('sessionid') || null;
+      const rawUserurl = inner.get('userurl') || inner.get('dst') || inner.get('link-orig') || null;
+      result.dst = sanitizeDst(rawUserurl);
       console.log(`[COOVA] loginurl → mac=${result.mac} ip=${result.ip} challenge=${result.challenge ? result.challenge.slice(0,8)+'…' : null}`);
     }
-  } catch (err) {
-    console.warn('[COOVA] Failed to parse loginurl:', err.message);
+  } catch (e) {
+    console.warn('[COOVA] Failed to parse loginurl:', e);
   }
-
   return result;
 }
 
-// ── getMacForIp ───────────────────────────────────────────────────────────
 // Tries chilli_query list first (most reliable), then OS ARP table.
 function getMacForIp(ip) {
   return new Promise((resolve) => {
     if (!ip || ip === '127.0.0.1' || ip === '::1') return resolve(null);
 
-    // Primary: chilli_query list — chilli has the MAC from DHCP exchange
     exec(`${CHILLI_IPC} list`, (err, stdout) => {
       if (!err && stdout && stdout.trim()) {
         const line = stdout.split('\n').find(l => l.includes(ip));
         if (line) {
           const parts = line.trim().split(/\s+/);
-          const mac = parts[0]; // first column: MAC in dash format
+          const mac = parts[0];
           if (mac && /^[0-9a-f]{2}[-:]/i.test(mac)) {
             console.log(`[CHILLI-LIST] ${ip} → ${mac}`);
             return resolve(mac);
@@ -114,7 +102,6 @@ function getMacForIp(ip) {
         }
       }
 
-      // Fallback: OS ARP table
       exec(`arp -n ${ip}`, (err2, stdout2) => {
         if (err2) return resolve(null);
         const match = stdout2.match(/([0-9a-f]{2}[:\-][0-9a-f]{2}[:\-][0-9a-f]{2}[:\-][0-9a-f]{2}[:\-][0-9a-f]{2}[:\-][0-9a-f]{2})/i);
@@ -155,6 +142,68 @@ router.get('/client-mac', async (req, res) => {
   res.json({ mac, ip });
 });
 
+// ── GET /api/whoami ───────────────────────────────────────────────────────
+// Identifies a returning user by their IP address.
+// Checks chilli_query list for an active session, then looks up their
+// campaign slug in the DB. Returns mac + slug so the frontend can restore
+// state and redirect to /connecting without the user picking a campaign again.
+router.get('/whoami', async (req, res) => {
+  const clientIp = getClientIp(req);
+  const ip = (clientIp || '').replace(/^::ffff:/, '');
+
+  if (!ip || ip === '127.0.0.1' || ip === '::1') {
+    return res.json({ mac: null, slug: null, active: false });
+  }
+
+  // Step 1: look up MAC from chilli_query list or ARP
+  const mac = await getMacForIp(ip);
+  if (!mac) {
+    console.log(`[WHOAMI] No chilli session for ip=${ip}`);
+    return res.json({ mac: null, slug: null, active: false });
+  }
+
+  // Normalize MAC to colon format for DB lookup
+  const macNorm = mac.replace(/-/g, ':').toLowerCase();
+  const macDash = mac.replace(/:/g, '-').toLowerCase();
+
+  // Step 2: find their most recent granted session in the DB
+  try {
+    const db  = getDb();
+    const row = db.prepare(`
+      SELECT s.id, s.campaign_slug, s.expires_at, s.access_granted
+      FROM sessions s
+      WHERE (s.mac_address = ? OR s.mac_address = ?)
+        AND s.access_granted = 1
+      ORDER BY s.created_at DESC
+      LIMIT 1
+    `).get(macNorm, macDash);
+    db.close();
+
+    if (!row) {
+      console.log(`[WHOAMI] mac=${mac} not in DB or not granted`);
+      return res.json({ mac, slug: null, active: false });
+    }
+
+    // Check if session has expired
+    const expired = row.expires_at && new Date(row.expires_at) < new Date();
+    if (expired) {
+      console.log(`[WHOAMI] mac=${mac} session expired at ${row.expires_at}`);
+      return res.json({ mac, slug: null, active: false });
+    }
+
+    console.log(`[WHOAMI] mac=${mac} → slug=${row.campaign_slug} expires=${row.expires_at}`);
+    res.json({
+      mac,
+      slug:      row.campaign_slug,
+      active:    true,
+      expiresAt: row.expires_at,
+    });
+  } catch (err) {
+    console.error('[WHOAMI] DB error:', err.message);
+    res.json({ mac: null, slug: null, active: false });
+  }
+});
+
 // ── GET /api/:slug/status ─────────────────────────────────────────────────
 router.get('/:slug/status', async (req, res) => {
   const c = getCampaignBySlug(req.params.slug);
@@ -162,14 +211,12 @@ router.get('/:slug/status', async (req, res) => {
 
   const ip = req.query.ip || getClientIp(req);
 
-  // MAC + challenge resolution — four layers
   let mac       = req.query.mac || req.query.username || null;
   let challenge = req.query.challenge || null;
   let dst       = sanitizeDst(
     req.query.dst || req.query['link-orig'] || req.query.userurl || null
   );
 
-  // Layer 2: CoovaChilli loginurl params
   if ((!mac || !challenge) && req.query.loginurl) {
     const coova = extractCoovaParams(req.query);
     if (!mac)       mac       = coova.mac       || null;
@@ -177,7 +224,6 @@ router.get('/:slug/status', async (req, res) => {
     if (!dst)       dst       = coova.dst       || null;
   }
 
-  // Layer 3: chilli_query list + ARP fallback
   if (!mac && ip) mac = await getMacForIp(ip);
 
   console.log(`[STATUS] slug=${req.params.slug} ip=${ip} mac=${mac} challenge=${challenge ? challenge.slice(0,8)+'…' : null}`);
@@ -272,7 +318,6 @@ router.post('/:slug/access/grant', async (req, res) => {
   const clientIp = getClientIp(req);
   const hours    = c.session_hours || 1;
 
-  // MAC resolution: session DB → chilli list → ARP
   let mac = session.mac_address;
   if (!mac && clientIp) {
     console.log(`[GRANT] No MAC in session — trying chilli list + ARP for ${clientIp}`);
@@ -286,7 +331,6 @@ router.post('/:slug/access/grant', async (req, res) => {
     });
   }
 
-  // Challenge resolution: body (new frontend) → session DB (stored on status call)
   const challenge = bodyChallenge || session.challenge || null;
 
   if (!challenge) {

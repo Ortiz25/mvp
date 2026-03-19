@@ -19,7 +19,9 @@ function WifiArc({ strength = 3 }: { strength?: number }) {
   );
 }
 
-function CampaignCard({ camp, selected, onClick }: { camp: CampaignSummary; selected: boolean; onClick: () => void }) {
+function CampaignCard({ camp, selected, onClick }: {
+  camp: CampaignSummary; selected: boolean; onClick: () => void;
+}) {
   const watchPct = Math.round((camp.video_required_pct ?? 0.8) * 100);
   return (
     <button onClick={onClick}
@@ -73,13 +75,13 @@ function CampaignCard({ camp, selected, onClick }: { camp: CampaignSummary; sele
 }
 
 export function PickerPage() {
-  const { hotspot, selectCampaign, refresh, status } = usePortal();
+  const { hotspot, selectCampaign, refresh, status, selectedSlug, resolving } = usePortal();
   const navigate = useNavigate();
 
-  const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]);
-  const [selected,  setSelected]  = useState<string | null>(null);
+  const [campaigns,        setCampaigns]        = useState<CampaignSummary[]>([]);
+  const [selected,         setSelected]         = useState<string | null>(null);
   const [loadingCampaigns, setLoadingCampaigns] = useState(true);
-  const [starting,  setStarting]  = useState(false);
+  const [starting,         setStarting]         = useState(false);
 
   useEffect(() => {
     listCampaigns()
@@ -88,7 +90,20 @@ export function PickerPage() {
       .finally(() => setLoadingCampaigns(false));
   }, []);
 
-  // If server says already active → go straight to connecting
+  // ── Returning user: whoAmI resolved a slug → auto-fetch status ────────
+  // SessionContext sets selectedSlug after whoAmI identifies the user.
+  // We watch for that change here and trigger a refresh, which will then
+  // populate status.accessGranted — triggering the redirect below.
+  useEffect(() => {
+    if (selectedSlug && !status && !resolving) {
+      console.log('[PickerPage] Returning user detected — fetching status for slug:', selectedSlug);
+      refresh();
+    }
+  }, [selectedSlug, resolving]);
+
+  // ── Redirect if already active ────────────────────────────────────────
+  // Covers both returning users (detected via whoAmI) and users who
+  // somehow land back on the picker after completing the flow.
   useEffect(() => {
     if (status?.active || status?.accessGranted) {
       navigate('/connecting', { replace: true });
@@ -100,14 +115,24 @@ export function PickerPage() {
     setStarting(true);
     selectCampaign(selected);
     await refresh();
-    // refresh() sets status — the useEffect above will handle routing
-    // But also check directly in case the effect fires too late
     setStarting(false);
     navigate('/watch', { replace: true });
   };
 
-  // Debug section — visible when mac is missing
-  const debugVisible = !hotspot.mac;
+  const debugVisible = !hotspot.mac && !resolving;
+
+  // ── Resolving state (whoAmI in flight) ────────────────────────────────
+  // Show a brief spinner instead of the picker while we check if the user
+  // has an active session. This prevents a flash of the picker UI before
+  // the redirect to /connecting fires.
+  if (resolving) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 gap-4 px-5">
+        <div className="w-8 h-8 rounded-full border-2 border-signal/30 border-t-signal animate-spin" />
+        <p className="text-[12px] text-white/30 font-body">Checking your session…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="px-5 py-5">
@@ -169,18 +194,18 @@ export function PickerPage() {
         )}
       </button>
 
-      {/* Debug panel — only shows when mac is missing */}
+      {/* Debug panel — only shows when mac is missing and not resolving */}
       {debugVisible && (
         <div className="mt-6 rounded-xl border border-yellow-500/20 bg-yellow-500/[0.04] px-4 py-3">
           <p className="text-[10px] font-display font-bold text-yellow-400/60 uppercase tracking-wider mb-1.5">
             Setup Required
           </p>
           <p className="text-[11px] text-yellow-300/50 font-body leading-relaxed">
-            No MAC address detected. This means the MikroTik login.html is not
+            No MAC address detected. This means CoovaChilli is not
             redirecting to captive.local with <code className="text-yellow-200/60">?mac=</code> params.
           </p>
           <p className="text-[11px] text-yellow-300/30 font-body mt-1.5">
-            Check: flash/hotspot/login.html on your MikroTik router.
+            Check: /etc/chilli/config HS_UAMHOMEPAGE setting.
           </p>
         </div>
       )}

@@ -1,23 +1,24 @@
-import { createContext, useContext, useState, useCallback, useRef, ReactNode } from 'react';
-import { CampaignSummary, CampaignConfig, PortalStatus, portalApi } from '../lib/api';
+import {
+  createContext, useContext, useState, useCallback,
+  useEffect, useRef, ReactNode,
+} from 'react';
+import { CampaignSummary, CampaignConfig, PortalStatus, portalApi, whoAmI } from '../lib/api';
 
 /**
- * Hotspot params — captured ONCE from the URL on first load.
- * CoovaChilli redirects unauthenticated clients to:
- *   http://192.168.182.1/?loginurl=http://192.168.182.1/?res=notyet
- *     &uamip=...&uamport=3990&challenge=XXXX&mac=YY&ip=ZZ
- *     &sessionid=SSSS&userurl=...
+ * SessionContext — manages hotspot params, campaign selection, and session state.
  *
- * The challenge is a one-time token CoovaChilli generates per session.
- * It is required to compute the UAM logon response that actually moves
- * the chilli session from 'dnat' (blocked) to 'pass' (internet open).
+ * Two entry paths:
  *
- * Flow:
- *   1. Frontend extracts challenge from loginurl on first load
- *   2. challenge is stored in sessionStorage so it survives SPA navigation
- *   3. On /access/grant, challenge is sent to the backend
- *   4. Backend calls http://192.168.182.1:3990/logon?username=MAC&response=MD5(...)
- *   5. CoovaChilli validates and opens internet for that session
+ * A) NEW USER — CoovaChilli redirects with loginurl params:
+ *    URL contains ?loginurl=...&challenge=XXX&mac=YY&ip=ZZ
+ *    → readHotspotParams() extracts and caches in sessionStorage
+ *    → User picks campaign → refresh() → video → survey → grant → /connecting
+ *
+ * B) RETURNING USER — visits captive.local with internet already active:
+ *    No URL params, sessionStorage may be empty (different browser/session)
+ *    → whoAmI() asks backend to identify client by IP via chilli_query
+ *    → If active session found: restore mac + slug → refresh() → /connecting
+ *    → Shows /connecting with time remaining, no re-authentication needed
  */
 
 const SS_KEY = 'cp_hotspot_v3';
@@ -26,17 +27,14 @@ export interface HotspotParams {
   mac:        string | null;
   ip:         string | null;
   dst:        string | null;
-  challenge:  string | null;  // CoovaChilli UAM challenge token — REQUIRED for grant
-  chilliSid:  string | null;  // CoovaChilli session ID (for diagnostics)
+  challenge:  string | null;
+  chilliSid:  string | null;
 }
 
 let _cached: HotspotParams | null = null;
 
-// Sentinel values that should never be stored as a real dst
 const DST_SENTINELS = [
-  'captive.local',
-  '192.168.100.1',
-  '192.168.182.1',
+  'captive.local', '192.168.100.1', '192.168.182.1',
   '192.168.88.1', '192.168.88.2',
   '/gen_204', '/generate_204', '/connecttest', '/ncsi',
   '/hotspot-detect', '/canonical.html', 'hotspot/login', '/login',
@@ -59,16 +57,12 @@ function readHotspotParams(): HotspotParams {
 
   const p = new URLSearchParams(window.location.search);
 
-  // Top-level params (non-CoovaChilli direct path)
   let mac       = p.get('mac') || p.get('username') || null;
   let ip        = p.get('ip') || null;
   let dst       = p.get('dst') || p.get('link-orig') || p.get('userurl') || null;
   let challenge = p.get('challenge') || null;
   let chilliSid = p.get('sessionid') || null;
 
-  // CoovaChilli wraps everything inside loginurl=
-  // /?loginurl=http://192.168.182.1/?res=notyet&challenge=XXX&mac=YY&ip=ZZ
-  //   &sessionid=SSSS&userurl=...
   const loginurl = p.get('loginurl');
   if (loginurl) {
     try {
@@ -79,18 +73,14 @@ function readHotspotParams(): HotspotParams {
       const qstart = decoded.indexOf('?');
       if (qstart !== -1) {
         const inner = new URLSearchParams(decoded.slice(qstart + 1));
-
         if (!mac)       mac       = inner.get('mac') || inner.get('username') || null;
         if (!ip)        ip        = inner.get('ip') || null;
         if (!challenge) challenge = inner.get('challenge') || null;
         if (!chilliSid) chilliSid = inner.get('sessionid') || null;
-
         const rawUserurl = inner.get('userurl') || inner.get('dst') || inner.get('link-orig') || null;
         if (!dst) dst = rawUserurl;
-
         console.log('[Hotspot] Params from loginurl:', {
-          mac,
-          ip,
+          mac, ip,
           challenge: challenge ? challenge.slice(0, 8) + '…' : null,
           chilliSid,
         });
@@ -110,7 +100,7 @@ function readHotspotParams(): HotspotParams {
     return params;
   }
 
-  // Fall back to sessionStorage — SPA navigation loses the URL params
+  // Restore from sessionStorage (SPA navigation loses URL params)
   try {
     const stored = sessionStorage.getItem(SS_KEY);
     if (stored) {
@@ -126,7 +116,7 @@ function readHotspotParams(): HotspotParams {
     }
   } catch {}
 
-  console.log('[Hotspot] No params found — MAC will be resolved via ARP from /status');
+  console.log('[Hotspot] No params found — will try whoAmI for returning user');
   return { mac: null, ip: null, dst: null, challenge: null, chilliSid: null };
 }
 
@@ -139,6 +129,7 @@ interface Ctx {
   status:         PortalStatus   | null;
   config:         CampaignConfig | null;
   loading:        boolean;
+  resolving:      boolean;   // true while whoAmI is in flight
   error:          string | null;
   refresh:        () => Promise<void>;
 }
@@ -146,21 +137,67 @@ interface Ctx {
 const Ctx = createContext<Ctx>({
   hotspot: { mac: null, ip: null, dst: null, challenge: null, chilliSid: null },
   campaigns: [], setCampaigns: () => {}, selectedSlug: null, selectCampaign: () => {},
-  status: null, config: null, loading: false, error: null, refresh: async () => {},
+  status: null, config: null, loading: false, resolving: false, error: null,
+  refresh: async () => {},
 });
 
 export function SessionProvider({ children }: { children: ReactNode }) {
-  const hotspotRef              = useRef<HotspotParams>(readHotspotParams());
-  const [hotspot, setHotspot]   = useState<HotspotParams>(hotspotRef.current);
+  const hotspotRef            = useRef<HotspotParams>(readHotspotParams());
+  const [hotspot, setHotspot] = useState<HotspotParams>(hotspotRef.current);
 
   const [campaigns,    setCampaigns]    = useState<CampaignSummary[]>([]);
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [status,       setStatus]       = useState<PortalStatus | null>(null);
   const [config,       setConfig]       = useState<CampaignConfig | null>(null);
   const [loading,      setLoading]      = useState(false);
+  const [resolving,    setResolving]    = useState(false);
   const [error,        setError]        = useState<string | null>(null);
 
   const slugRef = useRef<string | null>(null);
+
+  // ── Returning user auto-detection ─────────────────────────────────────
+  // If we have no hotspot params (no URL params, empty sessionStorage),
+  // call /api/whoami to identify the client by their IP address.
+  // This handles the case where a user with an active session revisits
+  // captive.local — we restore their slug and redirect to /connecting.
+  useEffect(() => {
+    const h = hotspotRef.current;
+    // Skip if we already have params from URL or sessionStorage
+    if (h.mac || h.challenge) return;
+
+    console.log('[Hotspot] No params — calling whoAmI for returning user detection');
+    setResolving(true);
+
+    whoAmI()
+      .then(data => {
+        if (data.mac && data.active && data.slug) {
+          console.log(`[WhoAmI] Returning user: mac=${data.mac} slug=${data.slug} expires=${data.expiresAt}`);
+
+          // Restore MAC into hotspot params
+          const updated: HotspotParams = {
+            ...hotspotRef.current,
+            mac: data.mac,
+          };
+          hotspotRef.current = updated;
+          _cached = updated;
+          try { sessionStorage.setItem(SS_KEY, JSON.stringify(updated)); } catch {}
+          setHotspot(updated);
+
+          // Restore slug so refresh() knows what to fetch
+          slugRef.current = data.slug;
+          setSelectedSlug(data.slug);
+          // refresh() will be triggered by the PickerPage/ConnectingPage useEffect
+          // that watches selectedSlug
+        } else {
+          console.log('[WhoAmI] No active session found — new user flow');
+        }
+      })
+      .catch(err => {
+        // whoAmI failing is non-fatal — user just goes through normal flow
+        console.warn('[WhoAmI] Failed:', err.message);
+      })
+      .finally(() => setResolving(false));
+  }, []); // runs once on mount
 
   const selectCampaign = useCallback((slug: string) => {
     slugRef.current = slug;
@@ -202,7 +239,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   return (
     <Ctx.Provider value={{
       hotspot, campaigns, setCampaigns, selectedSlug, selectCampaign,
-      status, config, loading, error, refresh,
+      status, config, loading, resolving, error, refresh,
     }}>
       {children}
     </Ctx.Provider>

@@ -76,9 +76,22 @@ export interface GrantResult {
   expiresAt: string;
 }
 
+// Returned by GET /api/whoami — identifies a returning user by their IP
+export interface WhoAmI {
+  mac:       string | null;
+  slug:      string | null;
+  active:    boolean;
+  expiresAt: string | null;
+}
+
 export const listCampaigns = () =>
   req<{ campaigns: CampaignSummary[] }>('/api/campaigns')
     .then(r => r.campaigns);
+
+// Identifies the requesting client without any URL params.
+// Used by returning users who already have internet access.
+export const whoAmI = () =>
+  req<WhoAmI>('/api/whoami');
 
 export const portalApi = {
   status: (slug: string, hotspot?: Partial<HotspotParams>) => {
@@ -105,9 +118,6 @@ export const portalApi = {
       body: JSON.stringify({ sessionId, answers }),
     }),
 
-  // challenge is the CoovaChilli UAM token from the loginurl redirect.
-  // The backend uses it to call chilli's /logon endpoint and authorize
-  // the session at network layer (move from dnat → pass state).
   grantAccess: (slug: string, sessionId: string, challenge: string | null) =>
     req<GrantResult>(`/api/${slug}/access/grant`, {
       method: 'POST',
