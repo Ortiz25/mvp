@@ -186,8 +186,23 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           // Restore slug so refresh() knows what to fetch
           slugRef.current = data.slug;
           setSelectedSlug(data.slug);
-          // refresh() will be triggered by the PickerPage/ConnectingPage useEffect
-          // that watches selectedSlug
+          // Call refresh() directly here so status is fetched immediately
+          // regardless of which page is currently mounted.
+          // Both PickerPage and ConnectingPage depend on status to know
+          // whether to redirect or show the countdown — without this call
+          // they would only get status after a user interaction.
+          setTimeout(() => {
+            // setTimeout(0) defers until after setSelectedSlug has re-rendered
+            // so slugRef.current is set when refresh() reads it.
+            const slug = data.slug;
+            slugRef.current = slug;
+            portalApi.status(slug, { mac: data.mac })
+              .then(s => {
+                setStatus(s);
+                portalApi.config(slug).then(c => setConfig(c)).catch(() => {});
+              })
+              .catch(() => {});
+          }, 0);
         } else {
           console.log('[WhoAmI] No active session found — new user flow');
         }

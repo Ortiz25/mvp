@@ -3,16 +3,16 @@ import { useNavigate } from 'react-router-dom';
 import { usePortal } from '../context/SessionContext';
 import { calcTimeLeft, IconArrow, IconGrid, IconGlobe, IconBook } from '../components/layout/Shell';
 
-// ── Offline apps quick list ────────────────────────────────────────────────
 const OFFLINE_APPS = [
-  { name: 'Wikipedia',  desc: 'Offline encyclopedia', url: 'http://kiwix.local',   Icon: IconGlobe },
-  { name: 'Kolibri',    desc: 'Learning platform',    url: 'http://kolibri.local', Icon: IconBook  },
+  { name: 'Wikipedia', desc: 'Offline encyclopedia', url: 'http://kiwix.local',   Icon: IconGlobe },
+  { name: 'Kolibri',   desc: 'Learning platform',    url: 'http://kolibri.local', Icon: IconBook  },
 ];
 
 export function ConnectingPage() {
-  const { status, config } = usePortal();
-  const navigate           = useNavigate();
-  const loggedinFired      = useRef(false);
+  const { status, config, refresh, selectedSlug, resolving } = usePortal();
+  const navigate      = useNavigate();
+  const loggedinFired = useRef(false);
+  const refreshFired  = useRef(false);
 
   const sessionHours = config?.campaign?.sessionHours ?? 1;
   const expiresAt    = status?.expiresAt ?? null;
@@ -22,9 +22,23 @@ export function ConnectingPage() {
     expiresAt ? calcTimeLeft(expiresAt, sessionHours) : null
   );
 
-  // ── Fire CoovaChilli loggedin once ────────────────────────────────────────
-  // Hitting this endpoint tells the OS captive portal WebView that internet
-  // is available, dismissing the captive portal browser window.
+  // ── Bootstrap: ensure status is loaded ────────────────────────────────
+  // When a user navigates directly to /connecting (e.g. types 192.168.182.1
+  // in the browser after getting internet), status may be null because
+  // refresh() was never called. Wait for whoAmI to finish resolving, then
+  // call refresh() so we get expiresAt and can show the countdown.
+  useEffect(() => {
+    if (refreshFired.current) return;
+    if (resolving) return; // wait for whoAmI to finish first
+    if (!selectedSlug) return; // no slug yet — whoAmI still running or new user
+    if (status) return; // already have status, no need to fetch
+
+    refreshFired.current = true;
+    console.log('[ConnectingPage] Fetching status for slug:', selectedSlug);
+    refresh();
+  }, [selectedSlug, resolving, status]);
+
+  // ── Fire CoovaChilli loggedin once ────────────────────────────────────
   useEffect(() => {
     if (loggedinFired.current) return;
     loggedinFired.current = true;
@@ -35,20 +49,34 @@ export function ConnectingPage() {
     }, 800);
   }, []);
 
-  // ── Live countdown ────────────────────────────────────────────────────────
+  // ── Live countdown ─────────────────────────────────────────────────────
   useEffect(() => {
     if (!expiresAt) return;
     setTl(calcTimeLeft(expiresAt, sessionHours));
     const id = setInterval(() => {
       const next = calcTimeLeft(expiresAt, sessionHours);
       setTl(next);
-      // When session fully expires redirect back to picker
       if (next.expired) navigate('/', { replace: true });
     }, 1000);
     return () => clearInterval(id);
   }, [expiresAt, sessionHours]);
 
+  // ── If not online and not resolving, redirect to picker ───────────────
+  // This handles the edge case where someone navigates to /connecting
+  // but has no active session (whoAmI returned nothing).
+  useEffect(() => {
+    if (resolving) return; // still checking
+    if (!selectedSlug) return; // whoAmI still running
+    if (!status) return; // refresh not done yet
+    if (!status.accessGranted && !status.active) {
+      navigate('/', { replace: true });
+    }
+  }, [resolving, selectedSlug, status]);
+
   const fmt2 = (n: number) => String(n).padStart(2, '0');
+
+  // Show loading spinner while resolving whoAmI or fetching status
+  const stillLoading = resolving || (selectedSlug && !status);
 
   return (
     <div className="flex flex-col px-5 py-6 gap-5 animate-fade-up">
@@ -58,15 +86,21 @@ export function ConnectingPage() {
         <div className="relative">
           <div className="absolute inset-0 rounded-full bg-signal/20 animate-ping-slow"/>
           <div className="relative w-16 h-16 rounded-full bg-gradient-to-br from-signal to-aqua flex items-center justify-center shadow-lg">
-            <svg className="w-7 h-7 text-void" fill="none" viewBox="0 0 24 24"
-                 stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round"
-                    d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-            </svg>
+            {stillLoading ? (
+              <div className="w-6 h-6 rounded-full border-2 border-void/40 border-t-void animate-spin"/>
+            ) : (
+              <svg className="w-7 h-7 text-void" fill="none" viewBox="0 0 24 24"
+                   stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round"
+                      d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+            )}
           </div>
         </div>
         <div className="text-center">
-          <p className="font-display font-extrabold text-white text-xl mb-0.5">You're Online!</p>
+          <p className="font-display font-extrabold text-white text-xl mb-0.5">
+            {stillLoading ? 'Checking session…' : "You're Online!"}
+          </p>
           <p className="text-xs text-white/40 font-body">
             {config?.campaign?.name ?? 'CityNet'} · free internet access
           </p>
@@ -74,7 +108,7 @@ export function ConnectingPage() {
       </div>
 
       {/* ── Time remaining card ── */}
-      {tl && expiresAt && (
+      {!stillLoading && tl && expiresAt && (
         <div className={`rounded-xl border px-5 py-4 transition-colors duration-700
           ${tl.urgent && !tl.expired
             ? 'bg-red-500/[0.07] border-red-500/20'
@@ -112,9 +146,17 @@ export function ConnectingPage() {
         </div>
       )}
 
+      {/* No expiry info — chilli fallback session (no DB record) */}
+      {!stillLoading && !expiresAt && status?.accessGranted && (
+        <div className="rounded-xl border border-signal/20 bg-signal/[0.06] px-5 py-4 text-center">
+          <p className="text-[11px] text-white/40 font-body">
+            Session active · expiry time not available
+          </p>
+        </div>
+      )}
+
       {/* ── Offline apps toggle ── */}
       <div className="rounded-xl border border-white/[0.07] overflow-hidden">
-        {/* Toggle header */}
         <button
           onClick={() => setShowApps(s => !s)}
           className="w-full flex items-center justify-between px-4 py-3.5
@@ -135,7 +177,6 @@ export function ConnectingPage() {
           </svg>
         </button>
 
-        {/* App list */}
         {showApps && (
           <div className="border-t border-white/[0.05] bg-white/[0.01] p-3 space-y-2">
             {OFFLINE_APPS.map(({ name, desc, url, Icon }) => (
