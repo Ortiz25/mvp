@@ -18,10 +18,12 @@ const {
 } = require('../lib/campaigns');
 
 const {
-  getOrCreateSession, getSession, getDb,
+  getOrCreateSession, getSession,
   markVideoWatched, markSurveyDone, markAccessGranted,
   isSessionActive, getAllSessions,
 } = require('../lib/sessions');
+
+const { getDb } = require('../db/migrate');
 
 const { grantAccess } = require('../lib/radius');
 
@@ -33,7 +35,9 @@ function getClientIp(req) {
   return (
     (req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
     (req.headers['x-real-ip']       || '').split(',')[0].trim() ||
-    req.ip || null
+    (req.socket?.remoteAddress || '').replace(/^::ffff:/, '').trim() ||
+    (req.ip || '').replace(/^::ffff:/, '') ||
+    null
   );
 }
 
@@ -144,62 +148,94 @@ router.get('/client-mac', async (req, res) => {
 
 // ── GET /api/whoami ───────────────────────────────────────────────────────
 // Identifies a returning user by their IP address.
-// Checks chilli_query list for an active session, then looks up their
-// campaign slug in the DB. Returns mac + slug so the frontend can restore
-// state and redirect to /connecting without the user picking a campaign again.
+//
+// Two-tier strategy:
+//   Tier 1 — DB: find a granted, non-expired session for this MAC.
+//            Returns the exact campaign slug + expiresAt.
+//   Tier 2 — Chilli fallback: if chilli shows the session as 'pass' but
+//            the DB has no granted record (e.g. device reconnected after
+//            a Pi reboot, or session pre-dates the portal), we still
+//            return active=true with the first active campaign slug so
+//            the frontend can show the status page.
 router.get('/whoami', async (req, res) => {
-  const clientIp = getClientIp(req);
-  const ip = (clientIp || '').replace(/^::ffff:/, '');
+  const rawIp = getClientIp(req) || req.socket?.remoteAddress || '';
+  const ip    = rawIp.replace(/^::ffff:/, '').trim();
+
+  console.log(`[WHOAMI] request from ip=${ip}`);
 
   if (!ip || ip === '127.0.0.1' || ip === '::1') {
     return res.json({ mac: null, slug: null, active: false });
   }
 
-  // Step 1: look up MAC from chilli_query list or ARP
+  // Step 1: resolve MAC from chilli_query list or ARP
   const mac = await getMacForIp(ip);
   if (!mac) {
-    console.log(`[WHOAMI] No chilli session for ip=${ip}`);
+    console.log(`[WHOAMI] No chilli/ARP entry for ip=${ip}`);
     return res.json({ mac: null, slug: null, active: false });
   }
 
-  // Normalize MAC to colon format for DB lookup
-  const macNorm = mac.replace(/-/g, ':').toLowerCase();
-  const macDash = mac.replace(/:/g, '-').toLowerCase();
+  console.log(`[WHOAMI] ip=${ip} → mac=${mac}`);
 
-  // Step 2: find their most recent granted session in the DB
   try {
-    const db  = getDb();
+    const db = getDb();
+
+    // Tier 1: DB lookup — granted non-expired session
     const row = db.prepare(`
-      SELECT s.id, s.campaign_slug, s.expires_at, s.access_granted
-      FROM sessions s
-      WHERE (s.mac_address = ? OR s.mac_address = ?)
-        AND s.access_granted = 1
-      ORDER BY s.created_at DESC
-      LIMIT 1
-    `).get(macNorm, macDash);
+      SELECT s.id, c.slug AS campaign_slug, s.expires_at
+      FROM   sessions  s
+      JOIN   campaigns c ON c.id = s.campaign_id
+      WHERE  UPPER(REPLACE(s.mac_address, ':', '-')) = UPPER(REPLACE(?, ':', '-'))
+        AND  s.access_granted = 1
+      ORDER  BY s.created_at DESC
+      LIMIT  1
+    `).get(mac);
+
+    if (row) {
+      const expired = row.expires_at && new Date(row.expires_at) < new Date();
+      if (!expired) {
+        db.close();
+        console.log(`[WHOAMI] ✓ DB hit — mac=${mac} slug=${row.campaign_slug} expires=${row.expires_at}`);
+        return res.json({ mac, slug: row.campaign_slug, active: true, expiresAt: row.expires_at });
+      }
+      console.log(`[WHOAMI] DB session expired at ${row.expires_at} — trying chilli fallback`);
+    } else {
+      console.log(`[WHOAMI] No DB granted session for mac=${mac} — trying chilli fallback`);
+    }
+
+    // Tier 2: chilli fallback — device is in 'pass' state in chilli but
+    // has no DB record (reboot, pre-portal session, etc.).
+    // getMacForIp already confirmed the IP is in chilli list — now verify pass state.
+    const isPass = await new Promise((resolve) => {
+      exec(`${CHILLI_IPC} list`, (err, stdout) => {
+        if (err || !stdout) return resolve(false);
+        const macNorm = mac.replace(/:/g, '-').toUpperCase();
+        const line = stdout.split('\n').find(l =>
+          l.includes(ip) || l.toUpperCase().includes(macNorm)
+        );
+        if (!line) return resolve(false);
+        const parts = line.trim().split(/\s+/);
+        resolve(parts[2] === 'pass');
+      });
+    });
+
+    if (!isPass) {
+      db.close();
+      console.log(`[WHOAMI] mac=${mac} not in pass state`);
+      return res.json({ mac, slug: null, active: false });
+    }
+
+    // Pick the first active campaign as fallback slug
+    const campaign = db.prepare(
+      'SELECT slug FROM campaigns WHERE active=1 ORDER BY created_at DESC LIMIT 1'
+    ).get();
     db.close();
 
-    if (!row) {
-      console.log(`[WHOAMI] mac=${mac} not in DB or not granted`);
-      return res.json({ mac, slug: null, active: false });
-    }
+    const slug = campaign?.slug ?? null;
+    console.log(`[WHOAMI] ✓ Chilli fallback — mac=${mac} slug=${slug}`);
+    res.json({ mac, slug, active: true, expiresAt: null });
 
-    // Check if session has expired
-    const expired = row.expires_at && new Date(row.expires_at) < new Date();
-    if (expired) {
-      console.log(`[WHOAMI] mac=${mac} session expired at ${row.expires_at}`);
-      return res.json({ mac, slug: null, active: false });
-    }
-
-    console.log(`[WHOAMI] mac=${mac} → slug=${row.campaign_slug} expires=${row.expires_at}`);
-    res.json({
-      mac,
-      slug:      row.campaign_slug,
-      active:    true,
-      expiresAt: row.expires_at,
-    });
   } catch (err) {
-    console.error('[WHOAMI] DB error:', err.message);
+    console.error('[WHOAMI] Error:', err.message);
     res.json({ mac: null, slug: null, active: false });
   }
 });
