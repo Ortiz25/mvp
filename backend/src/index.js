@@ -1,7 +1,7 @@
 'use strict';
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 
-const { cleanupExpiredSessions} = require('./lib/sessionCleanup');
+const { cleanupExpiredSessions, deactivateExpiredCampaigns } = require('./lib/sessionCleanup');
 const servicesRouter = require('./routes/services');
 
 const express   = require('express');
@@ -20,11 +20,17 @@ const IS_DEV   = NODE_ENV !== 'production';
 // ── Bootstrap DB ──────────────────────────────────────────────────────────
 migrate();
 
+// Run once immediately on startup so expired campaigns are deactivated
+// before the first request is served — no waiting for the first interval tick.
+deactivateExpiredCampaigns();
 
-
-// Every 60 seconds: restore missing rules AND revoke expired sessions
+// Every 60 seconds:
+//   1. Auto-deactivate campaigns whose end_date has passed (identical to
+//      pressing Deactivate in the admin panel — sets active=0 in the DB)
+//   2. Revoke expired client sessions from chilli + RADIUS DB
 setInterval(async () => {
-  await cleanupExpiredSessions();     // then revoke expired
+  deactivateExpiredCampaigns();
+  await cleanupExpiredSessions();
 }, 60 * 1000);
 
 const app = express();
@@ -62,6 +68,7 @@ const MEDIA_DIR = process.env.MEDIA_DIR || path.join(__dirname, '../media');
 app.use('/media',   express.static(MEDIA_DIR));
 app.use('/uploads', express.static(MEDIA_DIR));
 app.use('/api/services', servicesRouter);
+
 // ── Health ────────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({
   status: 'ok',
@@ -80,8 +87,6 @@ app.use((err, _req, res, _next) => {
   if (IS_DEV) console.error(err.stack);
   res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
 });
-
-
 
 // ── Start ─────────────────────────────────────────────────────────────────
 app.listen(PORT, '0.0.0.0', () => {

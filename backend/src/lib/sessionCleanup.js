@@ -2,13 +2,14 @@
 /**
  * sessionCleanup.js — CoovaChilli edition
  *
- * Runs every 60 seconds. Revokes MACs whose sessions have expired in SQLite.
+ * Runs every 60 seconds:
+ *   1. deactivateExpiredCampaigns() — sets active=0 on campaigns whose
+ *      end_date has passed, identical effect to pressing Deactivate in admin.
+ *   2. cleanupExpiredSessions()     — revokes MACs whose sessions have expired.
+ *
  * CoovaChilli enforces Session-Timeout at the network layer independently —
  * this job reconciles the SQLite DB and calls chilli_query deauthorize as
  * belt-and-suspenders.
- *
- * restoreActiveSessionRules() is NOT needed — CoovaChilli starts fresh on
- * every restart. Clients re-authenticate after a Pi reboot.
  */
 
 const { revokeAccess } = require('./radius');
@@ -21,6 +22,32 @@ function nowLocal() {
          `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 }
 
+// ── Campaign auto-deactivation ────────────────────────────────────────────
+// Sets active=0 on any campaign whose end_date has passed.
+// Identical to an operator pressing the Deactivate button — the campaign
+// disappears from the portal picker and stops serving immediately.
+function deactivateExpiredCampaigns() {
+  const db = getDb();
+  try {
+    const now    = nowLocal();
+    const result = db.prepare(`
+      UPDATE campaigns
+      SET    active     = 0,
+             updated_at = ?
+      WHERE  active     = 1
+        AND  end_date   IS NOT NULL
+        AND  end_date   < ?
+    `).run(now, now);
+
+    if (result.changes > 0) {
+      console.log(`[CLEANUP] ⏰ Auto-deactivated ${result.changes} expired campaign(s)`);
+    }
+  } finally {
+    db.close();
+  }
+}
+
+// ── Session expiry cleanup ────────────────────────────────────────────────
 async function cleanupExpiredSessions() {
   const db = getDb();
   try {
@@ -56,4 +83,4 @@ async function cleanupExpiredSessions() {
   }
 }
 
-module.exports = { cleanupExpiredSessions };
+module.exports = { cleanupExpiredSessions, deactivateExpiredCampaigns };

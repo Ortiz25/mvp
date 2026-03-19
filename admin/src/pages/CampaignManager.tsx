@@ -2,6 +2,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, Campaign, Video, Survey } from '../lib/api';
 
+// ── Date helpers ───────────────────────────────────────────────────────────
+// SQLite stores: "2026-04-01 08:00:00"  (space, with seconds)
+// datetime-local needs: "2026-04-01T08:00"  (T, no seconds)
+function toInputDate(val: string | null | undefined): string {
+  if (!val) return '';
+  return val.replace(' ', 'T').slice(0, 16);
+}
+// datetime-local gives: "2026-04-01T08:00"
+// Store as:             "2026-04-01 08:00:00"
+function fromInputDate(val: string): string | null {
+  if (!val) return null;
+  return val.replace('T', ' ') + ':00';
+}
+
 // ── Shared micro-components ────────────────────────────────────────────────
 
 function Spin({ sm }: { sm?: boolean }) {
@@ -40,27 +54,23 @@ function VideoSection({
   campaignId,
   onDone,
 }: {
-  campaignId: string;         // empty string when creating a new campaign
+  campaignId: string;
   onDone?: () => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // Existing video loaded from DB
   const [existing,   setExisting]   = useState<Video | null>(null);
   const [loadingVid, setLoadingVid] = useState(false);
-
-  // Upload state
   const [pickedFile, setPickedFile] = useState<File | null>(null);
   const [duration,   setDuration]   = useState(120);
   const [watchPct,   setWatchPct]   = useState(80);
   const [title,      setTitle]      = useState('');
   const [uploading,  setUploading]  = useState(false);
-  const [progress,   setProgress]   = useState(0);    // 0–100 fake progress
+  const [progress,   setProgress]   = useState(0);
   const [status,     setStatus]     = useState('');
   const [err,        setErr]        = useState('');
   const [deleting,   setDeleting]   = useState(false);
 
-  // Load existing video when editing a real campaign
   useEffect(() => {
     if (!campaignId) return;
     setLoadingVid(true);
@@ -70,7 +80,6 @@ function VideoSection({
       .finally(() => setLoadingVid(false));
   }, [campaignId]);
 
-  // Pre-fill from existing
   useEffect(() => {
     if (!existing) return;
     setDuration(existing.duration_seconds);
@@ -88,25 +97,19 @@ function VideoSection({
   const handleUpload = async (campId: string) => {
     if (!pickedFile || !campId) return;
     setUploading(true); setErr(''); setStatus('Uploading…'); setProgress(0);
-
-    // Fake progress ticker
     const ticker = setInterval(() => {
       setProgress(p => Math.min(p + Math.random() * 8, 90));
     }, 300);
-
     try {
-      // If there's an existing video, delete it first so we don't stack duplicates
       if (existing) {
         await api.deleteVideo(campId, existing.id);
         setExisting(null);
       }
-
       const res = await api.uploadVideo(campId, pickedFile, {
         title:              title || pickedFile.name,
         duration_seconds:   duration,
         required_watch_pct: watchPct / 100,
       });
-
       clearInterval(ticker);
       setProgress(100);
       setExisting(res.video);
@@ -138,16 +141,8 @@ function VideoSection({
     } finally { setDeleting(false); }
   };
 
-  // Expose upload method to parent via ref-like callback
-  // Parent calls VideoSection.triggerUpload(campaignId)
-  // We do this with a prop instead
-  useEffect(() => {
-    // expose handleUpload to parent via window temporarily? No - use forwardRef pattern via props
-  }, []);
-
   return (
     <div className="space-y-4">
-      {/* Existing video info */}
       {loadingVid && (
         <div className="flex items-center gap-2 text-xs text-white/30 font-body">
           <Spin sm /> Loading current video…
@@ -172,7 +167,6 @@ function VideoSection({
         </div>
       )}
 
-      {/* Metadata fields */}
       <div className="grid grid-cols-3 gap-3">
         <div className="col-span-3 sm:col-span-1">
           <FieldLabel>Duration (sec)</FieldLabel>
@@ -191,7 +185,6 @@ function VideoSection({
         </div>
       </div>
 
-      {/* File drop zone */}
       <label className={`block border-2 border-dashed rounded-xl p-5 text-center cursor-pointer
         transition-all duration-200 group
         ${pickedFile ? 'border-accent-500/40 bg-accent-500/5' : 'border-white/10 hover:border-white/20 hover:bg-white/[0.02]'}`}>
@@ -212,7 +205,6 @@ function VideoSection({
         <p className="text-[10px] text-white/20 font-body mt-0.5">MP4, WebM, MOV</p>
       </label>
 
-      {/* Upload button + progress */}
       {pickedFile && campaignId && (
         <div className="space-y-2">
           {uploading && (
@@ -392,17 +384,20 @@ function CampaignForm({
   const [status, setStatus] = useState('');
   const [saved,  setSaved]  = useState<Campaign | null>(initial);
 
-  // pending file picked in video tab before campaign exists
-  const pendingFileRef = useRef<File | null>(null);
+  const pendingFileRef   = useRef<File | null>(null);
   const pendingSurveyRef = useRef<{ title: string; questions: QLocal[] } | null>(null);
 
+  // ── form state ─────────────────────────────────────────────────────────
+  // start_date / end_date come from the DB as "2026-04-01 08:00:00".
+  // toInputDate() converts to "2026-04-01T08:00" which datetime-local requires.
+  // Without this conversion the input shows blank even though data is present.
   const [form, setForm] = useState({
-    name:          initial?.name         ?? '',
-    description:   initial?.description  ?? '',
-    active:        initial?.active       ?? 1,
+    name:          initial?.name          ?? '',
+    description:   initial?.description   ?? '',
+    active:        initial?.active        ?? 1,
     session_hours: initial?.session_hours ?? 8,
-    start_date:     initial?.starts_at    ?? '',
-    end_date:       initial?.ends_at      ?? '',
+    start_date:    toInputDate(initial?.start_date),
+    end_date:      toInputDate(initial?.end_date),
   });
 
   const upd = (k: string, v: unknown) => setForm(f => ({ ...f, [k]: v }));
@@ -414,23 +409,37 @@ function CampaignForm({
       let c: Campaign;
       if (isEdit && initial) {
         c = await api.updateCampaign(initial.id, {
-          name: form.name, description: form.description,
-          active: form.active, session_hours: form.session_hours,
-          start_date: form.start_date || null,   // ← was starts_at
-          end_date:   form.end_date   || null,   // ← was ends_at
+          name:          form.name,
+          description:   form.description,
+          active:        form.active,
+          session_hours: form.session_hours,
+          // fromInputDate() converts "2026-04-01T08:00" → "2026-04-01 08:00:00"
+          // which is what SQLite expects. Sending the raw T-format would store
+          // correctly too, but this keeps the DB format consistent.
+          start_date: fromInputDate(form.start_date),
+          end_date:   fromInputDate(form.end_date),
         });
       } else {
         const slug = form.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
         c = await api.createCampaign({
-          slug, name: form.name, description: form.description,
-          active: form.active, session_hours: form.session_hours,
-          start_date: form.start_date || null,   // ← was starts_at
-          end_date:   form.end_date   || null,   // ← was ends_at
+          slug,
+          name:          form.name,
+          description:   form.description,
+          active:        form.active,
+          session_hours: form.session_hours,
+          start_date: fromInputDate(form.start_date),
+          end_date:   fromInputDate(form.end_date),
         });
       }
       setSaved(c);
+      // Re-sync form dates from the saved response so the inputs
+      // reflect exactly what's in the DB after save.
+      setForm(f => ({
+        ...f,
+        start_date: toInputDate(c.start_date),
+        end_date:   toInputDate(c.end_date),
+      }));
       setStatus('✓ Details saved');
-      // Switch to video tab to prompt upload
       if (!isEdit) setTab('video');
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Save failed');
@@ -470,7 +479,6 @@ function CampaignForm({
                 ? 'text-accent-400 border-accent-500'
                 : 'text-white/35 border-transparent hover:text-white/60'}`}>
             <span>{t.icon}</span> {t.label}
-            {/* Dot for video/survey when campaign not yet created */}
             {!saved?.id && t.id !== 'details' && (
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400/50" />
             )}
@@ -515,12 +523,14 @@ function CampaignForm({
                 <div>
                   <FieldLabel>Starts At</FieldLabel>
                   <input type="datetime-local" className="input"
-  value={form.start_date} onChange={e => upd('start_date', e.target.value)} />
+                    value={form.start_date}
+                    onChange={e => upd('start_date', e.target.value)} />
                 </div>
                 <div>
                   <FieldLabel>Ends At</FieldLabel>
                   <input type="datetime-local" className="input"
-  value={form.end_date} onChange={e => upd('end_date', e.target.value)} />
+                    value={form.end_date}
+                    onChange={e => upd('end_date', e.target.value)} />
                 </div>
               </div>
             </div>
@@ -553,9 +563,7 @@ function CampaignForm({
             )}
             <VideoSection
               campaignId={saved?.id ?? ''}
-              onDone={() => {
-                if (!isEdit) setTab('survey');
-              }}
+              onDone={() => { if (!isEdit) setTab('survey'); }}
             />
           </>
         )}
@@ -571,9 +579,7 @@ function CampaignForm({
             )}
             <SurveySection
               campaignId={saved?.id ?? ''}
-              onSaved={() => {
-                if (saved) onSave(saved);
-              }}
+              onSaved={() => { if (saved) onSave(saved); }}
             />
             {saved?.id && (
               <button onClick={() => onSave(saved)} className="btn btn-surface w-full justify-center mt-2">
@@ -615,16 +621,25 @@ function CampaignCard({
           {c.description && (
             <p className="text-xs text-white/35 font-body mt-1 line-clamp-2">{c.description}</p>
           )}
+          {/* Show active date range if set */}
+          {(c.start_date || c.end_date) && (
+            <p className="text-[10px] text-white/25 font-body mt-1">
+              📅{' '}
+              {c.start_date ? toInputDate(c.start_date).replace('T', ' ') : '∞'}
+              {' → '}
+              {c.end_date ? toInputDate(c.end_date).replace('T', ' ') : '∞'}
+            </p>
+          )}
         </div>
       </div>
 
       {/* Stats row */}
       <div className="grid grid-cols-4 gap-2 mb-3">
         {[
-          { l: 'Sessions',  v: c.total_sessions   ?? 0 },
-          { l: 'Granted',   v: c.granted_sessions ?? 0 },
-          { l: 'Hours',     v: `${c.session_hours}h` },
-          { l: 'Watch',     v: `${Math.round((c.video_required_pct ?? 0.8) * 100)}%` },
+          { l: 'Sessions', v: c.total_sessions   ?? 0 },
+          { l: 'Granted',  v: c.granted_sessions ?? 0 },
+          { l: 'Hours',    v: `${c.session_hours}h` },
+          { l: 'Watch',    v: `${Math.round((c.video_required_pct ?? 0.8) * 100)}%` },
         ].map(({ l, v }) => (
           <div key={l} className="bg-white/3 rounded-lg p-2 text-center">
             <p className="font-display font-bold text-sm text-white">{v}</p>
@@ -656,11 +671,11 @@ function CampaignCard({
 // ── Main page ──────────────────────────────────────────────────────────────
 
 export function CampaignManager() {
-  const [campaigns,  setCampaigns]  = useState<Campaign[]>([]);
-  const [loading,    setLoading]    = useState(true);
-  const [mode,       setMode]       = useState<'list' | 'form'>('list');
-  const [editing,    setEditing]    = useState<Campaign | null>(null);
-  const [toggling,   setToggling]   = useState<string | null>(null);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [loading,   setLoading]   = useState(true);
+  const [mode,      setMode]      = useState<'list' | 'form'>('list');
+  const [editing,   setEditing]   = useState<Campaign | null>(null);
+  const [toggling,  setToggling]  = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -671,7 +686,7 @@ export function CampaignManager() {
 
   useEffect(() => { load(); }, []);
 
-  const handleEdit   = (c: Campaign) => { setEditing(c);   setMode('form'); };
+  const handleEdit   = (c: Campaign) => { setEditing(c);    setMode('form'); };
   const handleNew    = ()             => { setEditing(null); setMode('form'); };
   const handleSaved  = ()             => { setMode('list');  load(); };
   const handleCancel = ()             => setMode('list');

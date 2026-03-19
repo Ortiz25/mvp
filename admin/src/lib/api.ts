@@ -22,7 +22,10 @@ export interface Campaign {
   id: string; slug: string; name: string; description: string;
   sponsor: string | null; primary_color: string; accent_color: string;
   bg_color: string; session_hours: number; active: number;
-  start_date: string | null; end_date: string | null;
+  // DB columns are start_date / end_date (not starts_at / ends_at).
+  // Stored as SQLite datetime strings: "2026-04-01 08:00:00"
+  start_date: string | null;
+  end_date:   string | null;
   created_at: string; updated_at: string;
   video_required_pct: number; video_duration: number;
   video_filename: string | null; video_original: string | null;
@@ -65,16 +68,6 @@ export interface HotspotClient {
   address: string; mac: string; uptime: string; name: string;
 }
 
-/**
- * RevokeResult — returned by DELETE /api/admin/sessions/:id
- *
- * logoutUrl: the MikroTik Hotspot logout URL to visit in a browser
- *            to forcibly expire the router session. In mock mode, '/'.
- * note:      human-readable explanation of what the admin needs to do next.
- *
- * In Hotspot mode the DB revoke is instant, but the router session will
- * only end when the browser visits logoutUrl, or the session expires naturally.
- */
 export interface RevokeResult {
   success:   boolean;
   logoutUrl: string;
@@ -87,7 +80,6 @@ export const api = {
   login:    (token: string) => req<Stats>('/stats', {}, token),
   stats:    () => req<Stats>('/stats'),
 
-  // MikroTik Hotspot — simple connectivity test (no credentials needed)
   mikrotik:        () => req<MikrotikStatus>('/mikrotik/status'),
   mikrotikClients: () => req<{ clients: HotspotClient[] }>('/mikrotik/clients'),
 
