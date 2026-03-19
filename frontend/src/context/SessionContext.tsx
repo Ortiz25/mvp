@@ -194,9 +194,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           setTimeout(() => {
             // setTimeout(0) defers until after setSelectedSlug has re-rendered
             // so slugRef.current is set when refresh() reads it.
-            const slug = data.slug;
+            // data.slug is guaranteed non-null here (checked above in the if condition)
+            const slug = data.slug as string;
             slugRef.current = slug;
-            portalApi.status(slug, { mac: data.mac })
+            portalApi.status(slug, { mac: data.mac ?? undefined })
               .then(s => {
                 setStatus(s);
                 portalApi.config(slug).then(c => setConfig(c)).catch(() => {});
