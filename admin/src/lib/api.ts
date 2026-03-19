@@ -24,8 +24,9 @@ export interface Campaign {
   bg_color: string; session_hours: number; active: number;
   // DB columns are start_date / end_date (not starts_at / ends_at).
   // Stored as SQLite datetime strings: "2026-04-01 08:00:00"
-  start_date: string | null;
-  end_date:   string | null;
+  start_date:      string | null;
+  end_date:        string | null;
+  watch_frequency: 'always' | 'once_per_day' | 'once_ever';
   created_at: string; updated_at: string;
   video_required_pct: number; video_duration: number;
   video_filename: string | null; video_original: string | null;

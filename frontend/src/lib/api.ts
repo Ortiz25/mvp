@@ -27,8 +27,9 @@ export interface PortalStatus {
   campaignId:    string;
   campaignSlug:  string;
   sessionHours:  number;
-  videoWatched:  boolean;
-  surveyDone:    boolean;
+  watchFrequency: 'always' | 'once_per_day' | 'once_ever';
+  videoWatched:   boolean;
+  surveyDone:     boolean;
   accessGranted: boolean;
   active:        boolean;
   expiresAt:     string | null;

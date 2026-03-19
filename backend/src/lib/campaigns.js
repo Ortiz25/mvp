@@ -2,24 +2,8 @@
 const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../db/migrate');
 
-// ── Date check helper ─────────────────────────────────────────────────────
-// Returns true if the campaign is within its scheduled date window.
-// A null start_date means "no start restriction" (active from beginning).
-// A null end_date means "no end restriction" (active indefinitely).
-function isWithinDateWindow(c) {
-  const now = new Date();
-  if (c.start_date && new Date(c.start_date) > now) return false;
-  if (c.end_date   && new Date(c.end_date)   < now) return false;
-  return true;
-}
-
-// ── Queries ───────────────────────────────────────────────────────────────
-
 function getAllCampaigns(includeInactive = false) {
   const db = getDb();
-  // Admin panel passes includeInactive=true so it can show all campaigns
-  // regardless of date window (so admins can see/edit expired campaigns).
-  // The portal-facing path uses getCampaignConfig which enforces the window.
   const where = includeInactive ? '' : 'WHERE c.active=1';
   const rows = db.prepare(`
     SELECT c.*,
@@ -64,16 +48,12 @@ function getCampaignById(id) {
 
 function getCampaignConfig(slug) {
   const db = getDb();
-
-  // Only fetch campaigns that are:
-  //   1. active=1 (manually enabled)
-  //   2. Within their scheduled date window (start_date / end_date)
   const c = db.prepare(`
     SELECT * FROM campaigns
     WHERE slug = ?
       AND active = 1
-      AND (start_date IS NULL OR start_date <= datetime('now'))
-      AND (end_date   IS NULL OR end_date   >= datetime('now'))
+      AND (start_date IS NULL OR start_date <= datetime('now','localtime'))
+      AND (end_date   IS NULL OR end_date   >= datetime('now','localtime'))
   `).get(slug);
 
   if (!c) { db.close(); return null; }
@@ -98,12 +78,13 @@ function createCampaign(d) {
   const db = getDb();
   const id = uuidv4();
   db.prepare(
-    'INSERT INTO campaigns(id,slug,name,description,sponsor,logo_url,primary_color,accent_color,bg_color,session_hours,start_date,end_date) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)'
+    'INSERT INTO campaigns(id,slug,name,description,sponsor,logo_url,primary_color,accent_color,bg_color,session_hours,start_date,end_date,watch_frequency) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)'
   ).run(
     id, d.slug, d.name, d.description || null, d.sponsor || null,
     d.logo_url || null, d.primary_color || '#0050ff',
     d.accent_color || '#00c896', d.bg_color || '#050c1a',
-    d.session_hours || 8, d.start_date || null, d.end_date || null
+    d.session_hours || 8, d.start_date || null, d.end_date || null,
+    d.watch_frequency || 'once_per_day'
   );
   const r = db.prepare('SELECT * FROM campaigns WHERE id=?').get(id);
   db.close();
@@ -116,6 +97,7 @@ function updateCampaign(id, d) {
     'name', 'description', 'sponsor', 'logo_url',
     'primary_color', 'accent_color', 'bg_color',
     'session_hours', 'active', 'start_date', 'end_date',
+    'watch_frequency',
   ];
   const fields = [], vals = [];
   for (const k of allowed) {

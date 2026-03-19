@@ -264,20 +264,21 @@ router.get('/:slug/status', async (req, res) => {
 
   console.log(`[STATUS] slug=${req.params.slug} ip=${ip} mac=${mac} challenge=${challenge ? challenge.slice(0,8)+'…' : null}`);
 
-  const session = getOrCreateSession(ip, c.id, mac, dst, challenge);
+  const session = getOrCreateSession(ip, c.id, mac, dst, challenge, c.watch_frequency || 'once_per_day');
 
   res.json({
-    sessionId:     session.id,
-    campaignId:    c.id,
-    campaignSlug:  c.slug,
-    sessionHours:  c.session_hours,
-    videoWatched:  session.video_watched,
-    surveyDone:    session.survey_done,
-    accessGranted: session.access_granted,
-    active:        isSessionActive(session),
-    expiresAt:     session.expires_at,
-    mac:           session.mac_address,
-    dst:           session.dst_url,
+    sessionId:      session.id,
+    campaignId:     c.id,
+    campaignSlug:   c.slug,
+    sessionHours:   c.session_hours,
+    watchFrequency: c.watch_frequency || 'once_per_day',
+    videoWatched:   session.video_watched,
+    surveyDone:     session.survey_done,
+    accessGranted:  session.access_granted,
+    active:         isSessionActive(session),
+    expiresAt:      session.expires_at,
+    mac:            session.mac_address,
+    dst:            session.dst_url,
   });
 });
 

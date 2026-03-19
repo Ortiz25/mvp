@@ -395,9 +395,10 @@ function CampaignForm({
     name:          initial?.name          ?? '',
     description:   initial?.description   ?? '',
     active:        initial?.active        ?? 1,
-    session_hours: initial?.session_hours ?? 8,
-    start_date:    toInputDate(initial?.start_date),
-    end_date:      toInputDate(initial?.end_date),
+    session_hours:   initial?.session_hours   ?? 8,
+    watch_frequency: initial?.watch_frequency ?? 'once_per_day',
+    start_date:      toInputDate(initial?.start_date),
+    end_date:        toInputDate(initial?.end_date),
   });
 
   const upd = (k: string, v: unknown) => setForm(f => ({ ...f, [k]: v }));
@@ -411,11 +412,9 @@ function CampaignForm({
         c = await api.updateCampaign(initial.id, {
           name:          form.name,
           description:   form.description,
-          active:        form.active,
-          session_hours: form.session_hours,
-          // fromInputDate() converts "2026-04-01T08:00" → "2026-04-01 08:00:00"
-          // which is what SQLite expects. Sending the raw T-format would store
-          // correctly too, but this keeps the DB format consistent.
+          active:          form.active,
+          session_hours:   form.session_hours,
+          watch_frequency: form.watch_frequency,
           start_date: fromInputDate(form.start_date),
           end_date:   fromInputDate(form.end_date),
         });
@@ -425,8 +424,9 @@ function CampaignForm({
           slug,
           name:          form.name,
           description:   form.description,
-          active:        form.active,
-          session_hours: form.session_hours,
+          active:          form.active,
+          session_hours:   form.session_hours,
+          watch_frequency: form.watch_frequency,
           start_date: fromInputDate(form.start_date),
           end_date:   fromInputDate(form.end_date),
         });
@@ -517,6 +517,24 @@ function CampaignForm({
                   <input type="number" min={1} max={72} className="input"
                     value={form.session_hours}
                     onChange={e => upd('session_hours', parseInt(e.target.value) || 8)} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <FieldLabel>Watch Frequency</FieldLabel>
+                  <select className="select" value={form.watch_frequency}
+                    onChange={e => upd('watch_frequency', e.target.value)}>
+                    <option value="once_per_day">Once per day</option>
+                    <option value="once_ever">Once ever</option>
+                    <option value="always">Every session</option>
+                  </select>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+                  <p className="text-[10px] text-white/30 font-body leading-relaxed">
+                    {form.watch_frequency === 'once_per_day' && 'Watch video once per day. Same-day top-ups skip video.'}
+                    {form.watch_frequency === 'once_ever' && 'Watch once per campaign lifetime. Never required again.'}
+                    {form.watch_frequency === 'always' && 'Must watch video every session before getting access.'}
+                  </p>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">

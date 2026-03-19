@@ -18,21 +18,22 @@ function migrate() {
   const db = getDb();
   db.exec(`
     CREATE TABLE IF NOT EXISTS campaigns (
-      id            TEXT PRIMARY KEY,
-      slug          TEXT NOT NULL UNIQUE,
-      name          TEXT NOT NULL,
-      description   TEXT,
-      sponsor       TEXT,
-      logo_url      TEXT,
-      primary_color TEXT NOT NULL DEFAULT '#0050ff',
-      accent_color  TEXT NOT NULL DEFAULT '#00c896',
-      bg_color      TEXT NOT NULL DEFAULT '#050c1a',
-      session_hours INTEGER NOT NULL DEFAULT 8,
-      active        INTEGER NOT NULL DEFAULT 1,
-      start_date    TEXT,
-      end_date      TEXT,
-      created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+      id             TEXT PRIMARY KEY,
+      slug           TEXT NOT NULL UNIQUE,
+      name           TEXT NOT NULL,
+      description    TEXT,
+      sponsor        TEXT,
+      logo_url       TEXT,
+      primary_color  TEXT NOT NULL DEFAULT '#0050ff',
+      accent_color   TEXT NOT NULL DEFAULT '#00c896',
+      bg_color       TEXT NOT NULL DEFAULT '#050c1a',
+      session_hours  INTEGER NOT NULL DEFAULT 8,
+      active         INTEGER NOT NULL DEFAULT 1,
+      start_date     TEXT,
+      end_date       TEXT,
+      watch_frequency TEXT NOT NULL DEFAULT 'once_per_day',
+      created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS campaign_videos (
       id                  TEXT PRIMARY KEY,
@@ -96,7 +97,6 @@ function migrate() {
 
   // ── Column migrations — safe to run on existing DBs ──────────────────
   const cols = db.prepare('PRAGMA table_info(sessions)').all().map(c => c.name);
-
   if (!cols.includes('dst_url')) {
     db.exec('ALTER TABLE sessions ADD COLUMN dst_url TEXT');
     console.log('  ↳ added dst_url column to sessions');
@@ -106,38 +106,45 @@ function migrate() {
     console.log('  ↳ added challenge column to sessions');
   }
 
+  // Add watch_frequency to existing campaigns tables
+  const campCols = db.prepare('PRAGMA table_info(campaigns)').all().map(c => c.name);
+  if (!campCols.includes('watch_frequency')) {
+    db.exec(`ALTER TABLE campaigns ADD COLUMN watch_frequency TEXT NOT NULL DEFAULT 'once_per_day'`);
+    console.log('  ↳ added watch_frequency column to campaigns');
+  }
+
   console.log('✅ DB migrated');
   db.close();
 }
 
 function seedCampaigns(db) {
-  const ic = db.prepare(`INSERT INTO campaigns (id,slug,name,description,sponsor,primary_color,accent_color,bg_color,session_hours) VALUES (?,?,?,?,?,?,?,?,?)`);
+  const ic = db.prepare(`INSERT INTO campaigns (id,slug,name,description,sponsor,primary_color,accent_color,bg_color,session_hours,watch_frequency) VALUES (?,?,?,?,?,?,?,?,?,?)`);
   const iv = db.prepare(`INSERT INTO campaign_videos (id,campaign_id,title,description,filename,duration_seconds,required_watch_pct) VALUES (?,?,?,?,?,?,?)`);
   const is = db.prepare(`INSERT INTO campaign_surveys (id,campaign_id,title) VALUES (?,?,?)`);
   const iq = db.prepare(`INSERT INTO survey_questions (id,survey_id,question,options,sort_order) VALUES (?,?,?,?,?)`);
 
-  function addCampaign(slug,name,desc,sponsor,pc,ac,bg,hours,videoFile,videoDur,vidPct,survTitle,questions) {
-    const cid=uuidv4(), sid=uuidv4();
-    ic.run(uuidv4(),slug,name,desc,sponsor,pc,ac,bg,hours);
-    const row=db.prepare('SELECT id FROM campaigns WHERE slug=?').get(slug);
+  function addCampaign(slug,name,desc,sponsor,pc,ac,bg,hours,freq,videoFile,videoDur,vidPct,survTitle,questions) {
+    const sid = uuidv4();
+    ic.run(uuidv4(),slug,name,desc,sponsor,pc,ac,bg,hours,freq);
+    const row = db.prepare('SELECT id FROM campaigns WHERE slug=?').get(slug);
     iv.run(uuidv4(),row.id,`Welcome: ${name}`,desc,videoFile,videoDur,vidPct);
     is.run(sid,row.id,survTitle);
-    questions.forEach(([q,opts],i)=>iq.run(uuidv4(),sid,q,JSON.stringify(opts),i));
+    questions.forEach(([q,opts],i) => iq.run(uuidv4(),sid,q,JSON.stringify(opts),i));
   }
 
-  addCampaign('default','Community Wi-Fi','Free community internet access.','CityNet','#0050ff','#00c896','#050c1a',8,'intro.mp4',120,0.8,'Help Us Improve',[
+  addCampaign('default','Community Wi-Fi','Free community internet access.','CityNet','#0050ff','#00c896','#050c1a',8,'once_per_day','intro.mp4',120,0.8,'Help Us Improve',[
     ['How did you hear about this Wi-Fi?',['Word of mouth','Community board','Social media','Just found it']],
     ['How often do you need internet here?',['Daily','A few times a week','Occasionally','First time']],
     ['What will you use the internet for today?',['Work / Education','Social media','News & info','Entertainment']],
   ]);
 
-  addCampaign('redcross','Red Cross Relief Zone','Emergency relief connectivity.','Red Cross','#cc0000','#ff6b6b','#1a0000',4,'redcross-intro.mp4',90,0.75,'Relief Services Survey',[
+  addCampaign('redcross','Red Cross Relief Zone','Emergency relief connectivity.','Red Cross','#cc0000','#ff6b6b','#1a0000',4,'always','redcross-intro.mp4',90,0.75,'Relief Services Survey',[
     ['What is your current shelter situation?',['Emergency shelter','Staying with family','Own home (damaged)','Other']],
     ['What services do you need most?',['Medical','Food & water','Communication','Evacuation help']],
     ['How many people are in your group?',['1','2–4','5–10','More than 10']],
   ]);
 
-  addCampaign('covid-health','Health Connect','COVID-19 health info & connectivity.','Ministry of Health','#0077b6','#48cae4','#03045e',6,'covid-info.mp4',150,0.85,'Health Check Survey',[
+  addCampaign('covid-health','Health Connect','COVID-19 health info & connectivity.','Ministry of Health','#0077b6','#48cae4','#03045e',6,'once_per_day','covid-info.mp4',150,0.85,'Health Check Survey',[
     ['Have you been vaccinated against COVID-19?',['Yes, fully','Yes, partially','No','Prefer not to say']],
     ['How are you feeling today?',['Well','Mild symptoms','Unwell','Need medical attention']],
     ['Do you need help accessing health services?',['No, I am fine','Need information','Need appointment','Need transport']],

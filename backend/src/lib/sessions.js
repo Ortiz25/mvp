@@ -20,10 +20,54 @@ function row2s(r) {
   };
 }
 
+// ── Watch frequency helpers ───────────────────────────────────────────────
+//
+// watch_frequency controls when a MAC must re-watch the video + survey:
+//
+//   always       — must watch on every single grant request
+//   once_per_day — must watch once per calendar day (local time)
+//                  after that, additional top-ups that day skip video/survey
+//   once_ever    — watch once per MAC per campaign, never again
+//
+// Implementation: instead of reusing the old session record (which carries
+// video_watched=true from a previous cycle), we create a NEW session when
+// the frequency window has reset. The old session is preserved for analytics.
+// The new session starts with video_watched=0, survey_done=0, so the portal
+// flow runs again correctly.
+
+function needsNewSession(existingSession, watchFrequency) {
+  if (!existingSession) return false; // no existing session, will create fresh
+  if (!existingSession.video_watched) return false; // hasn't watched yet, keep existing
+
+  switch (watchFrequency) {
+    case 'always':
+      // Must watch every time — always create a fresh session
+      return true;
+
+    case 'once_per_day': {
+      // Must watch once per calendar day.
+      // If the last video watch was on a previous calendar day → fresh session.
+      // We use created_at of the session as the proxy for "watch day" since
+      // a session with video_watched=true was completed on its created_at day.
+      const sessionDate = existingSession.created_at
+        ? existingSession.created_at.slice(0, 10) // "2026-03-19"
+        : null;
+      const today = new Date().toLocaleDateString('en-CA'); // "2026-03-19" local
+      return sessionDate !== today;
+    }
+
+    case 'once_ever':
+      // Watch once ever — reuse the existing session indefinitely
+      return false;
+
+    default:
+      return false;
+  }
+}
+
 // challenge = CoovaChilli UAM challenge token (from loginurl params)
-// Stored so the grant handler can use it even if the phone navigated
-// away from the original loginurl and lost the query params.
-function getOrCreateSession(ip, campaignId, mac = null, dst = null, challenge = null) {
+// campaignWatchFrequency = 'always' | 'once_per_day' | 'once_ever'
+function getOrCreateSession(ip, campaignId, mac = null, dst = null, challenge = null, watchFrequency = 'once_per_day') {
   const db = getDb();
   let row;
 
@@ -37,9 +81,26 @@ function getOrCreateSession(ip, campaignId, mac = null, dst = null, challenge = 
   ).get(ip, campaignId);
 
   if (row) {
-    // Update mutable fields — always take the freshest non-null value
-    // Challenge is especially important: update it if we have a new one
-    // (each new chilli session generates a new challenge)
+    const existing = row2s(row);
+
+    // Check if we need a fresh session based on watch_frequency
+    if (needsNewSession(existing, watchFrequency)) {
+      // Frequency window has reset — create a new session so video/survey
+      // run again. The old session record is kept for analytics.
+      console.log(`[SESSION] Frequency=${watchFrequency} reset for mac=${mac} — creating fresh session`);
+      const id = uuidv4();
+      db.prepare(
+        `INSERT INTO sessions
+           (id, campaign_id, ip_address, mac_address, dst_url, challenge,
+            video_watched, survey_done, access_granted)
+         VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0)`
+      ).run(id, campaignId, ip, mac, dst, challenge);
+      const created = db.prepare('SELECT * FROM sessions WHERE id=?').get(id);
+      db.close();
+      return row2s(created);
+    }
+
+    // Reuse existing session — update mutable fields
     db.prepare(`
       UPDATE sessions
       SET ip_address  = ?,
@@ -59,6 +120,7 @@ function getOrCreateSession(ip, campaignId, mac = null, dst = null, challenge = 
     });
   }
 
+  // No existing session — create fresh
   const id = uuidv4();
   db.prepare(
     `INSERT INTO sessions
@@ -107,7 +169,6 @@ function markAccessGranted(id, hours) {
   const pad = n => String(n).padStart(2, '0');
   const fmt = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ` +
                    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-
   db.prepare(`
     UPDATE sessions
     SET access_granted = 1,
