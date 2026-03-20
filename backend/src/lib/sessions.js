@@ -36,28 +36,32 @@ function row2s(r) {
 // flow runs again correctly.
 
 function needsNewSession(existingSession, watchFrequency) {
-  if (!existingSession) return false; // no existing session, will create fresh
-  if (!existingSession.video_watched) return false; // hasn't watched yet, keep existing
+  if (!existingSession) return false;
+
+  // Only reset the session AFTER a full grant cycle is complete.
+  // Resetting on video_watched=true would interrupt the video→survey→grant
+  // flow mid-way, sending the user back to the video after clicking Continue.
+  // The correct trigger is access_granted=1 — the previous session is done.
+  if (!existingSession.access_granted) return false;
 
   switch (watchFrequency) {
     case 'always':
-      // Must watch every time — always create a fresh session
+      // Must watch every session — reset after each completed grant
       return true;
 
     case 'once_per_day': {
-      // Must watch once per calendar day.
-      // If the last video watch was on a previous calendar day → fresh session.
-      // We use created_at of the session as the proxy for "watch day" since
-      // a session with video_watched=true was completed on its created_at day.
-      const sessionDate = existingSession.created_at
-        ? existingSession.created_at.slice(0, 10) // "2026-03-19"
-        : null;
-      const today = new Date().toLocaleDateString('en-CA'); // "2026-03-19" local
-      return sessionDate !== today;
+      // Reset only if the last grant was on a previous calendar day
+      const grantDate = existingSession.granted_at
+        ? existingSession.granted_at.slice(0, 10)
+        : existingSession.created_at
+          ? existingSession.created_at.slice(0, 10)
+          : null;
+      const today = new Date().toLocaleDateString('en-CA');
+      return grantDate !== today;
     }
 
     case 'once_ever':
-      // Watch once ever — reuse the existing session indefinitely
+      // Never reset — reuse session forever
       return false;
 
     default:

@@ -40,7 +40,7 @@ app.set('trust proxy', 1);
 app.use(cors({
   origin: IS_DEV
     ? true
-    : (process.env.CORS_ORIGINS || 'http://captive.local').split(','),
+    : (process.env.CORS_ORIGINS || 'http://captive.lan,http://captive.local').split(','),
   methods:        ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'x-admin-token'],
 }));

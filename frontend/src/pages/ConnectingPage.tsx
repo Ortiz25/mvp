@@ -4,8 +4,8 @@ import { usePortal } from '../context/SessionContext';
 import { calcTimeLeft, IconArrow, IconGrid, IconGlobe, IconBook } from '../components/layout/Shell';
 
 const OFFLINE_APPS = [
-  { name: 'Wikipedia', desc: 'Offline encyclopedia', url: 'http://kiwix.local',   Icon: IconGlobe },
-  { name: 'Kolibri',   desc: 'Learning platform',    url: 'http://kolibri.local', Icon: IconBook  },
+  { name: 'Wikipedia', desc: 'Offline encyclopedia', url: 'http://kiwix.lan',   Icon: IconGlobe },
+  { name: 'Kolibri',   desc: 'Learning platform',    url: 'http://kolibri.lan', Icon: IconBook  },
 ];
 
 export function ConnectingPage() {

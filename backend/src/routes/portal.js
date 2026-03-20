@@ -43,7 +43,7 @@ function getClientIp(req) {
 
 // Sentinel values that indicate a probe/redirect URL, not a real dst
 const DST_SENTINELS = [
-  'captive.local', '192.168.100.1', '192.168.182.1',
+  'captive.local', 'captive.lan', '192.168.100.1', '192.168.182.1',
   '192.168.88.1', '192.168.88.2',
   '/gen_204', '/generate_204', '/connecttest', '/ncsi',
   '/hotspot-detect', '/canonical.html', 'hotspot/login', '/login',

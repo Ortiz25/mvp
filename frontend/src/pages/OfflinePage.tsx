@@ -26,7 +26,7 @@ const APPS: App[] = [
     name: 'Kolibri',
     tagline: 'Learn anything, offline',
     desc: 'Khan Academy, CK-12, and thousands of courses — all without internet.',
-    url: 'http://kolibri.local',         // ← resolves via dnsmasq
+    url: 'http://kolibri.lan',         // ← resolves via dnsmasq
     Icon: IconBook,
     category: 'education',
     accent: 'violet',
@@ -38,7 +38,7 @@ const APPS: App[] = [
     name: 'Wikipedia',
     tagline: 'The world\'s encyclopedia',
     desc: 'Full offline Wikipedia via Kiwix. Browse millions of articles.',
-    url: 'http://kiwix.local',           // ← resolves via dnsmasq
+    url: 'http://kiwix.lan',           // ← resolves via dnsmasq
     Icon: IconGlobe,
     category: 'info',
     accent: 'sky',

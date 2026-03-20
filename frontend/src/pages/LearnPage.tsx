@@ -5,7 +5,7 @@ const resources = [
   {
     name: 'Kolibri', tagline: 'Offline Education Platform', emoji: '📚',
     desc: 'Khan Academy content, literacy, numeracy, vocational skills — all offline.',
-    url: 'http://kolibri.local:8080', badge: 'Offline · Free',
+    url: 'http://kolibri.lan', badge: 'Offline · Free',
     color: 'border-purple-500/20 bg-purple-500/5',
     accent: 'text-purple-400',
     topics: ['Maths','Reading','Science','Skills'],
@@ -13,7 +13,7 @@ const resources = [
   {
     name: 'Kiwix (Wikipedia)', tagline: 'Encyclopedia Offline', emoji: '🌍',
     desc: 'Millions of Wikipedia articles and reference content without internet.',
-    url: 'http://kiwix.local:8888', badge: 'Offline · Free',
+    url: 'http://kiwix.lan', badge: 'Offline · Free',
     color: 'border-blue-500/20 bg-blue-500/5',
     accent: 'text-blue-400',
     topics: ['History','Science','Geography','Culture'],
