@@ -4,8 +4,8 @@ import { usePortal } from '../context/SessionContext';
 import { calcTimeLeft, IconArrow, IconGrid, IconGlobe, IconBook } from '../components/layout/Shell';
 
 const OFFLINE_APPS = [
-  { name: 'Wikipedia', desc: 'Offline encyclopedia', url: 'http://kiwix.lan',   Icon: IconGlobe },
-  { name: 'Kolibri',   desc: 'Learning platform',    url: 'http://kolibri.lan', Icon: IconBook  },
+  { name: 'Wikipedia', desc: 'Offline encyclopedia', url: 'http://kiwix.livecrib.pro',   Icon: IconGlobe },
+  { name: 'Kolibri',   desc: 'Learning platform',    url: 'http://kolibri.livecrib.pro', Icon: IconBook  },
 ];
 
 export function ConnectingPage() {
@@ -15,9 +15,9 @@ export function ConnectingPage() {
   const refreshFired  = useRef(false);
 
   const sessionHours = config?.campaign?.sessionHours ?? 1;
-  // Use DB expiresAt if available. If null (chilli fallback session with no DB record),
-  // estimate from granted_at or fall back to sessionHours from now as a display estimate.
-  // This ensures the timer always shows something meaningful.
+
+  // Use DB expiresAt if available. If null (chilli fallback session),
+  // estimate from sessionHours so the timer always shows something.
   const rawExpiresAt = status?.expiresAt ?? null;
   const expiresAt = rawExpiresAt ?? (
     status?.accessGranted
@@ -28,24 +28,12 @@ export function ConnectingPage() {
   const [showApps, setShowApps] = useState(false);
   const [tl, setTl] = useState<ReturnType<typeof calcTimeLeft> | null>(null);
 
-  // Sync tl whenever expiresAt first becomes available (e.g. after status loads)
-  useEffect(() => {
-    if (expiresAt && !tl) {
-      setTl(calcTimeLeft(expiresAt, sessionHours));
-    }
-  }, [expiresAt]);
-
   // ── Bootstrap: ensure status is loaded ────────────────────────────────
-  // When a user navigates directly to /connecting (e.g. types 192.168.182.1
-  // in the browser after getting internet), status may be null because
-  // refresh() was never called. Wait for whoAmI to finish resolving, then
-  // call refresh() so we get expiresAt and can show the countdown.
   useEffect(() => {
     if (refreshFired.current) return;
-    if (resolving) return; // wait for whoAmI to finish first
-    if (!selectedSlug) return; // no slug yet — whoAmI still running or new user
-    if (status) return; // already have status, no need to fetch
-
+    if (resolving) return;
+    if (!selectedSlug) return;
+    if (status) return;
     refreshFired.current = true;
     console.log('[ConnectingPage] Fetching status for slug:', selectedSlug);
     refresh();
@@ -63,6 +51,8 @@ export function ConnectingPage() {
   }, []);
 
   // ── Live countdown ─────────────────────────────────────────────────────
+  // Runs whenever expiresAt becomes available or changes.
+  // No !tl guard — always update tl when expiresAt is known.
   useEffect(() => {
     if (!expiresAt) return;
     setTl(calcTimeLeft(expiresAt, sessionHours));
@@ -77,7 +67,7 @@ export function ConnectingPage() {
   // ── If not online and not resolving, redirect to picker ───────────────
   useEffect(() => {
     if (resolving) return;
-    if (!status) return; // still loading
+    if (!status) return;
     if (!status.accessGranted && !status.active) {
       navigate('/', { replace: true });
     }
@@ -85,11 +75,8 @@ export function ConnectingPage() {
 
   const fmt2 = (n: number) => String(n).padStart(2, '0');
 
-  // Show loading spinner while resolving whoAmI or fetching status
-  // stillLoading: true while whoAmI is resolving OR while we're fetching status
-  // After the whoAmI fix, status is set before resolving=false for returning users.
-  // For new users (grant flow), status is set by SurveyPage before navigating here.
-  const stillLoading = resolving || (!status && !selectedSlug);
+  // Show spinner while: whoAmI is resolving, OR we have a slug but no status yet
+  const stillLoading = resolving || (!!selectedSlug && !status);
 
   return (
     <div className="flex flex-col px-5 py-6 gap-5 animate-fade-up">
@@ -137,13 +124,11 @@ export function ConnectingPage() {
             </span>
           </div>
 
-          {/* Big countdown */}
           <div className={`font-mono text-4xl font-bold tabular-nums text-center mb-3 transition-colors duration-700
             ${tl.expired ? 'text-white/20' : tl.urgent ? 'text-red-400' : 'text-white'}`}>
             {tl.h > 0 && `${tl.h}:`}{fmt2(tl.m)}:{fmt2(tl.s)}
           </div>
 
-          {/* Progress bar */}
           <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
             <div
               className={`h-full rounded-full transition-all duration-1000
@@ -159,7 +144,7 @@ export function ConnectingPage() {
         </div>
       )}
 
-      {/* No expiry info — chilli fallback session (no DB record) */}
+      {/* No expiry info — chilli fallback session */}
       {!stillLoading && !expiresAt && status?.accessGranted && (
         <div className="rounded-xl border border-signal/20 bg-signal/[0.06] px-5 py-4 text-center">
           <p className="text-[11px] text-white/40 font-body">
@@ -218,7 +203,7 @@ export function ConnectingPage() {
       </div>
 
       {/* ── Browse now ── */}
-      <a
+      
         href="https://google.com"
         className="w-full py-4 rounded-xl font-display font-bold text-base text-center
           bg-gradient-to-r from-signal to-aqua text-void shadow-md
