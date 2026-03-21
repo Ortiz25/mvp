@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { usePortal } from '../context/SessionContext';
 import { listCampaigns, CampaignSummary } from '../lib/api';
 import { IconSignal, IconClock, IconPlay, IconCheck, IconArrow } from '../components/layout/Shell';
@@ -76,7 +76,15 @@ function CampaignCard({ camp, selected, onClick }: {
 
 export function PickerPage() {
   const { hotspot, selectCampaign, refresh, status, selectedSlug, resolving } = usePortal();
-  const navigate = useNavigate();
+  // Ref mirrors status so handleStart can read it synchronously after refresh()
+  const statusRef = useRef(status);
+  useEffect(() => { statusRef.current = status; }, [status]);
+  const navigate  = useNavigate();
+  const location  = useLocation();
+
+  // Notice passed from VideoPage when content is already consumed
+  const notice: string | null = (location.state as any)?.notice ?? null;
+  const dismissedSlug: string | null = (location.state as any)?.dismissedSlug ?? null;
 
   const [campaigns,        setCampaigns]        = useState<CampaignSummary[]>([]);
   const [selected,         setSelected]         = useState<string | null>(null);
@@ -116,7 +124,13 @@ export function PickerPage() {
     selectCampaign(selected);
     await refresh();
     setStarting(false);
-    navigate('/watch', { replace: true });
+    // Check statusRef synchronously — if already granted (returning user
+    // who somehow hit Start), go to /connecting. Otherwise go to /watch.
+    if (statusRef.current?.accessGranted || statusRef.current?.active) {
+      navigate('/connecting', { replace: true });
+    } else {
+      navigate('/watch', { replace: true });
+    }
   };
 
   const debugVisible = !hotspot.mac && !resolving;
@@ -154,6 +168,18 @@ export function PickerPage() {
         </p>
       </div>
 
+      {/* Notice banner — shown when a campaign's content is already consumed */}
+      {notice && (
+        <div className="mb-4 px-4 py-3.5 rounded-xl border border-amber-500/25
+          bg-amber-500/[0.06] animate-fade-up">
+          <p className="text-[10px] font-display font-bold uppercase tracking-wider
+            text-amber-400/70 mb-1">Content Already Viewed</p>
+          <p className="text-[12px] text-amber-200/60 font-body leading-relaxed">
+            {notice}
+          </p>
+        </div>
+      )}
+
       {/* Campaign list */}
       {loadingCampaigns ? (
         <div className="flex items-center justify-center py-12">
@@ -165,7 +191,7 @@ export function PickerPage() {
         </div>
       ) : (
         <div className="flex flex-col gap-3 mb-5 animate-fade-up anim-d1">
-          {campaigns.map(c => (
+          {campaigns.filter(c => c.slug !== dismissedSlug).map(c => (
             <CampaignCard
               key={c.slug}
               camp={c}

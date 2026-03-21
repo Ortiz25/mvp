@@ -13,7 +13,7 @@ module.exports = {
       PORT:             3000,
       DB_PATH:          '/home/admin/apps/captive-portal/data/captive.db',
       MEDIA_DIR:        '/home/admin/apps/captive-portal/media',
-      CORS_ORIGINS:     'http://captive.local,http://192.168.182.1',
+      CORS_ORIGINS: 'http://captive.lan,http://192.168.182.1',
       LAN_IFACE:        'eth1',
       CHILLI_QUERY_CMD: 'sudo chilli_query -s /var/run/chilli.eth1.sock',
     },

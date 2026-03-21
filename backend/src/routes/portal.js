@@ -28,6 +28,21 @@ const { getDb } = require('../db/migrate');
 const { grantAccess } = require('../lib/radius');
 
 const CHILLI_IPC = process.env.CHILLI_QUERY_CMD || 'sudo chilli_query -s /var/run/chilli.ipc';
+// Convert SQLite local datetime string "2026-03-20 12:00:00" to ISO format
+// SQLite stores local time but new Date() parses space-separated dates as UTC
+// on most JS engines, causing 3-hour offset errors in EAT (UTC+3).
+// Solution: replace space with T and append local timezone offset.
+function toISO(sqliteDate) {
+  if (!sqliteDate) return null;
+  if (sqliteDate.includes('T')) return sqliteDate; // already ISO
+  // "2026-03-20 12:00:00" → "2026-03-20T12:00:00" then treat as local
+  // We use a trick: parse as local by replacing space with T,
+  // then output as UTC ISO so the frontend gets the right absolute time.
+  const d = new Date(sqliteDate.replace(' ', 'T'));
+  return isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -191,11 +206,11 @@ router.get('/whoami', async (req, res) => {
     `).get(mac);
 
     if (row) {
-      const expired = row.expires_at && new Date(row.expires_at) < new Date();
+      const expired = row.expires_at && new Date(toISO(row.expires_at) || row.expires_at) < new Date();
       if (!expired) {
         db.close();
         console.log(`[WHOAMI] ✓ DB hit — mac=${mac} slug=${row.campaign_slug} expires=${row.expires_at}`);
-        return res.json({ mac, slug: row.campaign_slug, active: true, expiresAt: row.expires_at });
+        return res.json({ mac, slug: row.campaign_slug, active: true, expiresAt: toISO(row.expires_at) });
       }
       console.log(`[WHOAMI] DB session expired at ${row.expires_at} — trying chilli fallback`);
     } else {
@@ -276,7 +291,7 @@ router.get('/:slug/status', async (req, res) => {
     surveyDone:     session.survey_done,
     accessGranted:  session.access_granted,
     active:         isSessionActive(session),
-    expiresAt:      session.expires_at,
+    expiresAt:      toISO(session.expires_at),
     mac:            session.mac_address,
     dst:            session.dst_url,
   });

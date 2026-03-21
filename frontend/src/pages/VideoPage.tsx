@@ -24,8 +24,21 @@ export function VideoPage() {
     if (status?.active || status?.accessGranted) {
       navigate('/connecting', { replace: true }); return;
     }
+
+    const freq = status?.watchFrequency ?? 'always';
+
     if (status?.videoWatched) {
-      navigate('/survey', { replace: true }); return;
+      if (freq === 'always') {
+        // always mode: video watched in this cycle, proceed to survey
+        navigate('/survey', { replace: true });
+      } else {
+        // once_ever or once_per_day: content already consumed.
+        // Send back to picker with a message — no free internet.
+        const msg = freq === 'once_ever'
+          ? `You've already watched this campaign's content. Pick another campaign to get access.`
+          : `You've already watched today's content for this campaign. Come back tomorrow or pick another campaign.`;
+        navigate('/', { replace: true, state: { notice: msg, dismissedSlug: selectedSlug } });
+      }
     }
   }, [loading, status]);
 
@@ -133,4 +146,3 @@ export function VideoPage() {
       </button>
     </div>
   );
-}
