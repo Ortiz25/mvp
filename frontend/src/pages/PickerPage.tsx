@@ -135,7 +135,6 @@ export function PickerPage() {
     }
   };
 
-  const debugVisible = !hotspot.mac && !resolving;
 
   // ── Resolving state (whoAmI in flight) ────────────────────────────────
   // Show a brief spinner instead of the picker while we check if the user
@@ -222,21 +221,7 @@ export function PickerPage() {
         )}
       </button>
 
-      {/* Debug panel — only shows when mac is missing and not resolving */}
-      {debugVisible && (
-        <div className="mt-6 rounded-xl border border-yellow-500/20 bg-yellow-500/[0.04] px-4 py-3">
-          <p className="text-[10px] font-display font-bold text-yellow-400/60 uppercase tracking-wider mb-1.5">
-            Setup Required
-          </p>
-          <p className="text-[11px] text-yellow-300/50 font-body leading-relaxed">
-            No MAC address detected. This means CoovaChilli is not
-            redirecting to captive.local with <code className="text-yellow-200/60">?mac=</code> params.
-          </p>
-          <p className="text-[11px] text-yellow-300/30 font-body mt-1.5">
-            Check: /etc/chilli/config HS_UAMHOMEPAGE setting.
-          </p>
-        </div>
-      )}
+
     </div>
   );
 }

@@ -15,7 +15,15 @@ export function ConnectingPage() {
   const refreshFired  = useRef(false);
 
   const sessionHours = config?.campaign?.sessionHours ?? 1;
-  const expiresAt    = status?.expiresAt ?? null;
+  // Use DB expiresAt if available. If null (chilli fallback session with no DB record),
+  // estimate from granted_at or fall back to sessionHours from now as a display estimate.
+  // This ensures the timer always shows something meaningful.
+  const rawExpiresAt = status?.expiresAt ?? null;
+  const expiresAt = rawExpiresAt ?? (
+    status?.accessGranted
+      ? new Date(Date.now() + sessionHours * 3600 * 1000).toISOString()
+      : null
+  );
 
   const [showApps, setShowApps] = useState(false);
   const [tl, setTl] = useState<ReturnType<typeof calcTimeLeft> | null>(null);
