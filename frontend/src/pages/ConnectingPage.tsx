@@ -18,9 +18,14 @@ export function ConnectingPage() {
   const expiresAt    = status?.expiresAt ?? null;
 
   const [showApps, setShowApps] = useState(false);
-  const [tl, setTl] = useState(
-    expiresAt ? calcTimeLeft(expiresAt, sessionHours) : null
-  );
+  const [tl, setTl] = useState<ReturnType<typeof calcTimeLeft> | null>(null);
+
+  // Sync tl whenever expiresAt first becomes available (e.g. after status loads)
+  useEffect(() => {
+    if (expiresAt && !tl) {
+      setTl(calcTimeLeft(expiresAt, sessionHours));
+    }
+  }, [expiresAt]);
 
   // ── Bootstrap: ensure status is loaded ────────────────────────────────
   // When a user navigates directly to /connecting (e.g. types 192.168.182.1
@@ -62,21 +67,21 @@ export function ConnectingPage() {
   }, [expiresAt, sessionHours]);
 
   // ── If not online and not resolving, redirect to picker ───────────────
-  // This handles the edge case where someone navigates to /connecting
-  // but has no active session (whoAmI returned nothing).
   useEffect(() => {
-    if (resolving) return; // still checking
-    if (!selectedSlug) return; // whoAmI still running
-    if (!status) return; // refresh not done yet
+    if (resolving) return;
+    if (!status) return; // still loading
     if (!status.accessGranted && !status.active) {
       navigate('/', { replace: true });
     }
-  }, [resolving, selectedSlug, status]);
+  }, [resolving, status]);
 
   const fmt2 = (n: number) => String(n).padStart(2, '0');
 
   // Show loading spinner while resolving whoAmI or fetching status
-  const stillLoading = resolving || (selectedSlug && !status);
+  // stillLoading: true while whoAmI is resolving OR while we're fetching status
+  // After the whoAmI fix, status is set before resolving=false for returning users.
+  // For new users (grant flow), status is set by SurveyPage before navigating here.
+  const stillLoading = resolving || (!status && !selectedSlug);
 
   return (
     <div className="flex flex-col px-5 py-6 gap-5 animate-fade-up">

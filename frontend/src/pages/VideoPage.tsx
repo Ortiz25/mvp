@@ -35,8 +35,8 @@ export function VideoPage() {
         // once_ever or once_per_day: content already consumed.
         // Send back to picker with a message — no free internet.
         const msg = freq === 'once_ever'
-          ? `You've already watched this campaign's content. Pick another campaign to get access.`
-          : `You've already watched today's content for this campaign. Come back tomorrow or pick another campaign.`;
+          ? "You have already watched this campaign's content. Pick another campaign to get access."
+          : "You have already watched today's content for this campaign. Come back tomorrow or pick another campaign.";
         navigate('/', { replace: true, state: { notice: msg, dismissedSlug: selectedSlug } });
       }
     }
@@ -146,3 +146,4 @@ export function VideoPage() {
       </button>
     </div>
   );
+}

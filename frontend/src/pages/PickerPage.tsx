@@ -103,11 +103,13 @@ export function PickerPage() {
   // We watch for that change here and trigger a refresh, which will then
   // populate status.accessGranted — triggering the redirect below.
   useEffect(() => {
-    if (selectedSlug && !status && !resolving) {
-      console.log('[PickerPage] Returning user detected — fetching status for slug:', selectedSlug);
+    // Only fetch status if whoAmI has fully resolved AND status wasn't
+    // already set by the whoAmI flow (which now fetches status internally).
+    if (selectedSlug && !status && !resolving && !loading) {
+      console.log('[PickerPage] selectedSlug set but no status — fetching for slug:', selectedSlug);
       refresh();
     }
-  }, [selectedSlug, resolving]);
+  }, [selectedSlug, resolving, status, loading]);
 
   // ── Redirect if already active ────────────────────────────────────────
   // Covers both returning users (detected via whoAmI) and users who
