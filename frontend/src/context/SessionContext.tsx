@@ -162,8 +162,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   // captive.local — we restore their slug and redirect to /connecting.
   useEffect(() => {
     const h = hotspotRef.current;
-    // Skip if we already have params from URL or sessionStorage
-    if (h.mac || h.challenge) return;
+    // Skip whoAmI only if we have a challenge — that means CoovaChilli just
+    // redirected us with fresh params and we're in a new-user flow.
+    // Having a mac alone (restored from sessionStorage) is NOT enough to skip:
+    // the user may have returned to 192.168.182.1 after a previous session,
+    // in which case we MUST call whoAmI to check if their session is still active.
+    if (h.challenge) return;
 
     console.log('[Hotspot] No params — calling whoAmI for returning user detection');
     setResolving(true);

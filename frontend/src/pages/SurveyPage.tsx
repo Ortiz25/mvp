@@ -41,6 +41,18 @@ export function SurveyPage() {
       // chilli's UAM /logon endpoint and actually open internet access.
       // Without this, chilli_query authorize has no effect on the live session.
       await portalApi.grantAccess(selectedSlug, status.sessionId, hotspot.challenge);
+      // Clear challenge from sessionStorage — it's one-time use.
+      // Without this, the next visit to 192.168.182.1 would find a stale
+      // challenge in sessionStorage and skip whoAmI, preventing auto-redirect.
+      try {
+        const SS_KEY = 'cp_hotspot_v3';
+        const stored = sessionStorage.getItem(SS_KEY);
+        if (stored) {
+          const p = JSON.parse(stored);
+          p.challenge = null;
+          sessionStorage.setItem(SS_KEY, JSON.stringify(p));
+        }
+      } catch {}
       await refresh();
       navigate('/connecting', { replace: true });
     } catch (e) {
