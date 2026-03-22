@@ -29,21 +29,38 @@ export function ConnectingPage() {
     if (expiresAt && !tl) setTl(calcTimeLeft(expiresAt, sessionHours));
   }, [expiresAt, sessionHours]);
 
-  // ── Bootstrap: ensure status is loaded ────────────────────────────────
-  // When a user navigates directly to /connecting (e.g. types 192.168.182.1
-  // in the browser after getting internet), status may be null because
-  // refresh() was never called. Wait for whoAmI to finish resolving, then
-  // call refresh() so we get expiresAt and can show the countdown.
+  // ── Bootstrap: always fetch a fresh status on mount ───────────────────
+  // We removed refresh() from SurveyPage.doGrant() to avoid a race where
+  // getOrCreateSession() creates a brand-new unauthenticated session (for
+  // watch_frequency='always' campaigns) right after the grant — causing
+  // ConnectingPage to immediately bounce back to the picker.
+  //
+  // ConnectingPage is now the authoritative place for the post-grant fetch.
+  // Always re-fetch (don't skip when status is already set) so we get the
+  // correct accessGranted=true + expiresAt from the committed grant.
+  // Also covers: user types /connecting directly — whoAmI resolves slug, then
+  // this effect fires to get the full status.
   useEffect(() => {
     if (refreshFired.current) return;
     if (resolving) return; // wait for whoAmI to finish first
     if (!selectedSlug) return; // no slug yet — whoAmI still running or new user
-    if (status) return; // already have status, no need to fetch
 
     refreshFired.current = true;
-    console.log('[ConnectingPage] Fetching status for slug:', selectedSlug);
+    console.log('[ConnectingPage] Fetching fresh status for slug:', selectedSlug);
     refresh();
-  }, [selectedSlug, resolving, status]);
+  }, [selectedSlug, resolving]);
+
+  // ── Redirect if not authenticated ──────────────────────────────────────
+  // Only redirect AFTER we've fetched status ourselves (refreshFired=true).
+  // Without this guard, navigating here from SurveyPage with pre-grant status
+  // in context (accessGranted=false) would immediately bounce to the picker
+  // before our own refresh() returns the committed grant.
+  useEffect(() => {
+    if (resolving) return;
+    if (!refreshFired.current) return; // wait for our own fetch
+    if (!status) return;
+    if (!status.accessGranted && !status.active) navigate('/', { replace: true });
+  }, [resolving, status]);
 
   // ── Fire CoovaChilli loggedin once ────────────────────────────────────
   useEffect(() => {
@@ -68,17 +85,15 @@ export function ConnectingPage() {
     return () => clearInterval(id);
   }, [expiresAt, sessionHours]);
 
-  // ── Redirect if not authenticated ──────────────────────────────────────
-  useEffect(() => {
-    if (resolving) return;
-    if (!status) return;
-    if (!status.accessGranted && !status.active) navigate('/', { replace: true });
-  }, [resolving, status]);
-
   const fmt2 = (n: number) => String(n).padStart(2, '0');
 
-  // Show loading spinner while resolving whoAmI or fetching status
-  const stillLoading = resolving || (!status && !selectedSlug);
+  // Show loading spinner while:
+  // - whoAmI is in flight (resolving)
+  // - no slug yet (new user, neither path has resolved)
+  // - slug is set but status hasn't arrived yet (bootstrap refresh in flight,
+  //   which now always fires — including post-grant where SurveyPage no longer
+  //   calls refresh() before navigating here)
+  const stillLoading = resolving || !selectedSlug || (!status && selectedSlug !== null);
 
   return (
     <div className="flex flex-col px-5 py-6 gap-5 animate-fade-up">
@@ -207,7 +222,7 @@ export function ConnectingPage() {
       </div>
 
       {/* ── Browse now ── */}
-      <a
+      
         href="https://google.com"
         className="w-full py-4 rounded-xl font-display font-bold text-base text-center
           bg-gradient-to-r from-signal to-aqua text-void shadow-md

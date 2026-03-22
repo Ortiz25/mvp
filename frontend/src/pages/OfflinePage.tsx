@@ -15,8 +15,8 @@ interface App {
   url: string;
   Icon: React.FC<{ className?: string }>;
   category: AppCategory;
-  accent: string;       // Tailwind color class prefix
-  available: boolean;   // false = coming soon
+  accent: string;
+  available: boolean;
   featured?: boolean;
 }
 
@@ -26,11 +26,11 @@ const APPS: App[] = [
     name: 'Kolibri',
     tagline: 'Learn anything, offline',
     desc: 'Khan Academy, CK-12, and thousands of courses — all without internet.',
-    url: 'http://kolibri.lan',         // ← resolves via dnsmasq
+    url: 'http://kolibri.lan',
     Icon: IconBook,
     category: 'education',
     accent: 'violet',
-    available: true,   // overridden by live status check
+    available: true,
     featured: true,
   },
   {
@@ -38,13 +38,14 @@ const APPS: App[] = [
     name: 'Wikipedia',
     tagline: 'The world\'s encyclopedia',
     desc: 'Full offline Wikipedia via Kiwix. Browse millions of articles.',
-    url: 'http://kiwix.lan',           // ← resolves via dnsmasq
+    url: 'http://kiwix.lan',
     Icon: IconGlobe,
     category: 'info',
     accent: 'sky',
     available: true,
     featured: true,
-  },{
+  },
+  {
     id: 'community',
     name: 'Community Board',
     tagline: 'Local notices & events',
@@ -116,7 +117,6 @@ function FeaturedCard({ app }: { app: App }) {
       className={`app-tile border ${a.tile} transition-all duration-200
         ${app.available ? 'cursor-pointer' : 'cursor-default opacity-70'}
         animate-fade-up`}>
-      {/* Top row */}
       <div className="flex items-start justify-between gap-2 mb-1">
         <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${a.icon}`}>
           <app.Icon className="w-5 h-5" />
@@ -184,28 +184,27 @@ function AppRow({ app, delay = 0 }: { app: App; delay?: number }) {
 
 export function OfflinePage() {
   const [category, setCategory] = useState<AppCategory>('all');
-   // Add at top of OfflinePage component:
-const [serviceStatus, setServiceStatus] = useState<Record<string, boolean>>({});
+  const [serviceStatus, setServiceStatus] = useState<Record<string, boolean>>({});
 
-useEffect(() => { 
-  fetch('/api/services/status')
-    .then(r => r.json())
-    .then((data: {id: string, available: boolean}[]) => {
-      const map: Record<string, boolean> = {};
-      data.forEach(s => { map[s.id] = s.available; });
-      setServiceStatus(map);
-    })
-    .catch(() => {});
-}, []);
+  useEffect(() => {
+    fetch('/api/services/status')
+      .then(r => r.json())
+      .then((data: {id: string, available: boolean}[]) => {
+        const map: Record<string, boolean> = {};
+        data.forEach(s => { map[s.id] = s.available; });
+        setServiceStatus(map);
+      })
+      .catch(() => {});
+  }, []);
 
-// Then in APPS array, override available based on live status:
-const appsWithStatus = APPS.map(app => ({
-  ...app,
-  available: serviceStatus[app.id] ?? app.available,
-}));
-  const featured  = APPS.filter(a => a.featured);
-  const rest      = APPS.filter(a => !a.featured && (category === 'all' || a.category === category));
-  const available = APPS.filter(a => a.available).length;
+  const appsWithStatus = APPS.map(app => ({
+    ...app,
+    available: serviceStatus[app.id] ?? app.available,
+  }));
+
+  const featured  = appsWithStatus.filter(a => a.featured);
+  const rest      = appsWithStatus.filter(a => !a.featured && (category === 'all' || a.category === category));
+  const available = appsWithStatus.filter(a => a.available).length;
 
   return (
     <div className="px-4 py-5 overflow-y-auto max-h-[calc(100vh-260px)]">

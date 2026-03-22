@@ -39,11 +39,10 @@ export function SurveyPage() {
     try {
       // Pass the CoovaChilli challenge so the backend can call
       // chilli's UAM /logon endpoint and actually open internet access.
-      // Without this, chilli_query authorize has no effect on the live session.
       await portalApi.grantAccess(selectedSlug, status.sessionId, hotspot.challenge);
+
       // Clear challenge from sessionStorage — it's one-time use.
-      // Without this, the next visit to 192.168.182.1 would find a stale
-      // challenge in sessionStorage and skip whoAmI, preventing auto-redirect.
+      // Do this BEFORE navigating so returning visits don't find a stale challenge.
       try {
         const SS_KEY = 'cp_hotspot_v3';
         const stored = sessionStorage.getItem(SS_KEY);
@@ -53,7 +52,13 @@ export function SurveyPage() {
           sessionStorage.setItem(SS_KEY, JSON.stringify(p));
         }
       } catch {}
-      await refresh();
+
+      // Do NOT call refresh() here. refresh() calls /status → getOrCreateSession(),
+      // which for watch_frequency='always' campaigns sees access_granted=1 and creates
+      // a brand-new session with access_granted=0 — causing ConnectingPage to
+      // immediately bounce back to the picker.
+      // ConnectingPage's bootstrap will call refresh() once, after the backend has
+      // committed the grant, and will get accessGranted=true correctly.
       navigate('/connecting', { replace: true });
     } catch (e) {
       setSubmitting(false);

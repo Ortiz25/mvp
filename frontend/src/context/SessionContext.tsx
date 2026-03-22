@@ -127,6 +127,7 @@ interface Ctx {
   selectedSlug:   string | null;
   selectCampaign: (slug: string) => void;
   status:         PortalStatus   | null;
+  setStatus:      (s: PortalStatus | null) => void;
   config:         CampaignConfig | null;
   loading:        boolean;
   resolving:      boolean;   // true while whoAmI is in flight
@@ -137,7 +138,7 @@ interface Ctx {
 const Ctx = createContext<Ctx>({
   hotspot: { mac: null, ip: null, dst: null, challenge: null, chilliSid: null },
   campaigns: [], setCampaigns: () => {}, selectedSlug: null, selectCampaign: () => {},
-  status: null, config: null, loading: false, resolving: false, error: null,
+  status: null, setStatus: () => {}, config: null, loading: false, resolving: false, error: null,
   refresh: async () => {},
 });
 
@@ -256,7 +257,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   return (
     <Ctx.Provider value={{
       hotspot, campaigns, setCampaigns, selectedSlug, selectCampaign,
-      status, config, loading, resolving, error, refresh,
+      status, setStatus, config, loading, resolving, error, refresh,
     }}>
       {children}
     </Ctx.Provider>

@@ -87,6 +87,24 @@ function getOrCreateSession(ip, campaignId, mac = null, dst = null, challenge = 
   if (row) {
     const existing = row2s(row);
 
+    // Never reset a session that is currently active (access_granted=1 and not expired).
+    // This prevents a /status call immediately after grant — e.g. from ConnectingPage's
+    // bootstrap refresh or Shell's poll — from creating a brand-new unauthenticated session
+    // and bouncing the user back to the picker. The frequency window resets only after
+    // the active session has fully expired.
+    if (isSessionActive(existing)) {
+      // Reuse and patch mutable fields (IP may have changed via DHCP reassignment)
+      db.prepare(`
+        UPDATE sessions
+        SET ip_address  = ?,
+            mac_address = COALESCE(?, mac_address),
+            updated_at  = datetime('now')
+        WHERE id = ?
+      `).run(ip, mac, row.id);
+      db.close();
+      return row2s({ ...row, ip_address: ip, mac_address: mac || row.mac_address });
+    }
+
     // Check if we need a fresh session based on watch_frequency
     if (needsNewSession(existing, watchFrequency)) {
       // Frequency window has reset — create a new session so video/survey
