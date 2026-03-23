@@ -119,10 +119,13 @@ export function PickerPage() {
   }, [selectedSlug, resolving, status, loadingCampaigns]);
 
   // ── Redirect if already active ────────────────────────────────────────
-  // Covers both returning users (detected via whoAmI) and users who
-  // somehow land back on the picker after completing the flow.
+  // Only redirect when status.active is true — which means the session is
+  // granted AND not expired. Never redirect on accessGranted alone because
+  // the backend now returns accessGranted=false for expired sessions, but
+  // stale context may still carry the old accessGranted=true value until
+  // refresh() completes. Using active prevents the redirect loop.
   useEffect(() => {
-    if (status?.active || status?.accessGranted) {
+    if (status?.active) {
       navigate('/connecting', { replace: true });
     }
   }, [status]);
@@ -134,7 +137,7 @@ export function PickerPage() {
     await refresh();
     setStarting(false);
 
-    if (statusRef.current?.accessGranted || statusRef.current?.active) {
+    if (statusRef.current?.active) {
       navigate('/connecting', { replace: true });
       return;
     }

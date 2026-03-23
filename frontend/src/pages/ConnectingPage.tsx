@@ -56,25 +56,35 @@ export function ConnectingPage() {
   //      definitively not granted.
   useEffect(() => {
     if (resolving) return;
-    if (!refreshFired.current) return;
-    if (loading) return;
     if (!status) return;
 
-    // Session is active (granted AND not expired)
-    if (status.active) {
-      setGrantError(false);
+    // ── Expiry redirect: fire as soon as status is known, don't wait for
+    // refresh to complete. This prevents the spinner loop:
+    //   ConnectingPage mounts → stale context has active=false → spinner
+    //   → refresh completes → still active=false → navigate('/') →
+    //   PickerPage → sees accessGranted=true (stale) → navigate('/connecting') → loop
+    //
+    // Backend now returns accessGranted=sessionActive, so once expired,
+    // both active and accessGranted are false. We can redirect immediately.
+    if (!status.active && !status.accessGranted) {
+      // If we haven't refreshed yet, we might be reading stale context —
+      // wait for our own refresh to confirm before showing error.
+      if (!refreshFired.current || loading) return;
+      setGrantError(true);
       return;
     }
 
-    // Session was granted but has since expired — redirect to picker
-    // This handles manual navigation to /connecting after session ends.
-    if (status.accessGranted && !status.active) {
+    // Session granted but expired (accessGranted=true in stale context, active=false)
+    // Redirect immediately without spinning.
+    if (!status.active && status.accessGranted) {
       navigate('/', { replace: true });
       return;
     }
 
-    // Refresh completed, session genuinely not granted
-    setGrantError(true);
+    // Session is live — clear any error
+    if (status.active) {
+      setGrantError(false);
+    }
   }, [resolving, loading, status]);
 
   // ── Fire CoovaChilli loggedin once ────────────────────────────────────
