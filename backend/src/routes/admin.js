@@ -9,7 +9,7 @@ const { getDb }  = require('../db/migrate');
 const { buildLogoutUrl, testConnection, listAuthorizedClients } = require('../lib/radius');
 const {
   getAllSessions, getStats, getSurveyAggregates, revokeSession, getSession,
-  getVideoDropOffStats,
+  getVideoDropOffStats, getVideoEngagementStats,
 } = require('../lib/sessions');
 const {
   getAllCampaigns, getCampaignById, createCampaign, updateCampaign,
@@ -157,6 +157,13 @@ router.get('/campaigns/:campaignId/dropoff', (req, res) =>
 
 router.get('/dropoff', (req, res) =>
   res.json({ stats: getVideoDropOffStats(req.query.campaign || null) }));
+
+// ── Video engagement analytics (completion + drop-off + trend) ─────────────
+router.get('/campaigns/:campaignId/engagement', (req, res) =>
+  res.json({ stats: getVideoEngagementStats(req.params.campaignId) }));
+
+router.get('/engagement', (req, res) =>
+  res.json({ stats: getVideoEngagementStats(req.query.campaign || null) }));
 
 // ── Survey results ────────────────────────────────────────────────────────
 router.get('/survey/results', (req, res) =>

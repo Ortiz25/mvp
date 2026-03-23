@@ -634,30 +634,39 @@ function CampaignForm({
 
 // ── Drop-off analytics panel ───────────────────────────────────────────────
 
-function DropOffPanel({ campaignId }: { campaignId: string }) {
-  const [stats,   setStats]   = useState<{
-    total_views: number; completed: number; dropped_off: number;
-    avg_drop_pct: number | null; avg_watch_pct: number | null;
-    buckets: Array<{ bucket: string; count: number }>;
-  } | null>(null);
+function VideoEngagementPanel({ campaignId }: { campaignId: string }) {
+  type EngagementStats = {
+    summary: {
+      total_views: number; completed: number; dropped_off: number;
+      still_watching: number; avg_watch_pct: number | null;
+      avg_completion_pct: number | null; avg_drop_pct: number | null;
+      completion_rate: number | null; drop_rate: number | null;
+    };
+    trend: Array<{ day: string; views: number; completed: number; dropped: number }>;
+    dropBuckets:        Array<{ bucket: string; count: number }>;
+    completionBuckets:  Array<{ bucket: string; count: number }>;
+  };
+
+  const [stats,   setStats]   = useState<EngagementStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [open,    setOpen]    = useState(false);
+  const [tab,     setTab]     = useState<'completion' | 'dropoff' | 'trend'>('completion');
 
   const load = async () => {
     if (stats) { setOpen(o => !o); return; }
     setLoading(true); setOpen(true);
     try {
-      const r = await api.dropoffStats(campaignId);
+      const r = await api.engagementStats(campaignId);
       setStats(r.stats);
     } catch {}
     finally { setLoading(false); }
   };
 
-  const dropRate = stats && stats.total_views > 0
-    ? Math.round((stats.dropped_off / stats.total_views) * 100)
-    : null;
+  const s = stats?.summary;
 
-  const maxBucket = stats?.buckets.reduce((m, b) => Math.max(m, b.count), 1) ?? 1;
+  const maxDrop       = stats?.dropBuckets.reduce((m, b) => Math.max(m, b.count), 1) ?? 1;
+  const maxCompletion = stats?.completionBuckets.reduce((m, b) => Math.max(m, b.count), 1) ?? 1;
+  const maxTrend      = stats?.trend.reduce((m, r) => Math.max(m, r.views), 1) ?? 1;
 
   return (
     <div className="mt-3 border-t border-white/[0.05] pt-3">
@@ -665,62 +674,181 @@ function DropOffPanel({ campaignId }: { campaignId: string }) {
         onClick={load}
         className="flex items-center gap-1.5 text-[10px] font-display font-bold
           text-white/30 hover:text-white/60 transition-colors duration-150">
-        <span>📉</span>
-        <span>Drop-off Analytics</span>
+        <span>📊</span>
+        <span>Video Engagement</span>
         {!loading && <span className="ml-1 opacity-50">{open ? '▲' : '▼'}</span>}
         {loading && <span className="w-3 h-3 rounded-full border border-current border-t-transparent animate-spin ml-1" />}
       </button>
 
-      {open && stats && (
-        <div className="mt-2.5 space-y-2.5">
-          {/* Summary row */}
-          <div className="grid grid-cols-3 gap-2">
+      {open && stats && s && (
+        <div className="mt-3 space-y-3">
+
+          {/* ── Summary stats grid ── */}
+          <div className="grid grid-cols-4 gap-1.5">
             {[
-              { l: 'Views',     v: stats.total_views },
-              { l: 'Completed', v: stats.completed },
-              { l: 'Drop Rate', v: dropRate !== null ? `${dropRate}%` : '—' },
-            ].map(({ l, v }) => (
+              { l: 'Views',      v: s.total_views,                          color: 'text-white' },
+              { l: 'Completed',  v: s.completed,                            color: 'text-accent-400' },
+              { l: 'Dropped',    v: s.dropped_off,                          color: 'text-red-400' },
+              { l: 'Still on',   v: s.still_watching,                       color: 'text-white/50' },
+            ].map(({ l, v, color }) => (
               <div key={l} className="bg-white/[0.03] rounded-lg p-2 text-center border border-white/[0.05]">
-                <p className="font-display font-bold text-sm text-white">{v}</p>
-                <p className="text-[9px] text-white/25 font-body uppercase tracking-wide">{l}</p>
+                <p className={`font-display font-bold text-sm ${color}`}>{v ?? '—'}</p>
+                <p className="text-[8px] text-white/20 font-body uppercase tracking-wide mt-0.5">{l}</p>
               </div>
             ))}
           </div>
 
-          {/* Avg metrics */}
-          {(stats.avg_drop_pct !== null || stats.avg_watch_pct !== null) && (
-            <div className="flex gap-3 text-[10px] font-body text-white/40">
-              {stats.avg_watch_pct !== null && (
-                <span>Avg watched: <span className="text-white/70 font-bold">{stats.avg_watch_pct}%</span></span>
-              )}
-              {stats.avg_drop_pct !== null && (
-                <span>Avg drop-off at: <span className="text-red-400/80 font-bold">{stats.avg_drop_pct}%</span></span>
+          {/* ── Rate pills ── */}
+          <div className="flex gap-2 flex-wrap">
+            {s.completion_rate !== null && (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg
+                bg-accent-500/10 border border-accent-500/20">
+                <span className="text-[10px] text-accent-400/70 font-body">Completion rate</span>
+                <span className="text-[11px] font-display font-bold text-accent-400">{s.completion_rate}%</span>
+              </div>
+            )}
+            {s.drop_rate !== null && (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg
+                bg-red-500/10 border border-red-500/20">
+                <span className="text-[10px] text-red-400/70 font-body">Drop rate</span>
+                <span className="text-[11px] font-display font-bold text-red-400">{s.drop_rate}%</span>
+              </div>
+            )}
+            {s.avg_completion_pct !== null && (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg
+                bg-white/[0.04] border border-white/[0.08]">
+                <span className="text-[10px] text-white/40 font-body">Avg watch (completers)</span>
+                <span className="text-[11px] font-display font-bold text-white/70">{s.avg_completion_pct}%</span>
+              </div>
+            )}
+            {s.avg_drop_pct !== null && (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg
+                bg-white/[0.04] border border-white/[0.08]">
+                <span className="text-[10px] text-white/40 font-body">Avg drop-off at</span>
+                <span className="text-[11px] font-display font-bold text-amber-400/80">{s.avg_drop_pct}%</span>
+              </div>
+            )}
+          </div>
+
+          {/* ── Sub-tab bar ── */}
+          <div className="flex gap-px border-b border-white/[0.05]">
+            {([
+              { id: 'completion', label: '✅ Completers' },
+              { id: 'dropoff',   label: '📉 Drop-offs' },
+              { id: 'trend',     label: '📅 Trend' },
+            ] as const).map(t => (
+              <button key={t.id} onClick={() => setTab(t.id)}
+                className={`px-3 py-1.5 text-[9px] font-display font-bold uppercase tracking-wider
+                  border-b-2 transition-all duration-150
+                  ${tab === t.id
+                    ? 'text-accent-400 border-accent-500'
+                    : 'text-white/25 border-transparent hover:text-white/50'}`}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {/* ── Completion depth tab ── */}
+          {tab === 'completion' && (
+            <div className="space-y-1.5">
+              {stats.completionBuckets.length > 0 ? (
+                <>
+                  <p className="text-[9px] text-white/20 font-body mb-2">
+                    How far completers watched after hitting the required threshold
+                  </p>
+                  {stats.completionBuckets.map(b => (
+                    <div key={b.bucket} className="flex items-center gap-2">
+                      <span className="text-[9px] font-mono text-white/30 w-20 shrink-0">{b.bucket}</span>
+                      <div className="flex-1 h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-accent-500/70 to-accent-400/40 transition-all duration-500"
+                          style={{ width: `${(b.count / maxCompletion) * 100}%` }}
+                        />
+                      </div>
+                      <span className="text-[9px] font-mono text-accent-400/60 w-6 text-right shrink-0">{b.count}</span>
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <p className="text-[10px] text-white/20 font-body py-2">No completions recorded yet.</p>
               )}
             </div>
           )}
 
-          {/* Bucket chart */}
-          {stats.buckets.length > 0 ? (
-            <div className="space-y-1">
-              <p className="text-[9px] font-display font-bold uppercase tracking-widest text-white/20 mb-1.5">
-                Drop-off distribution
-              </p>
-              {stats.buckets.map(b => (
-                <div key={b.bucket} className="flex items-center gap-2">
-                  <span className="text-[9px] font-mono text-white/30 w-14 shrink-0">{b.bucket}</span>
-                  <div className="flex-1 h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-red-500/60 to-amber-500/60 transition-all duration-500"
-                      style={{ width: `${(b.count / maxBucket) * 100}%` }}
-                    />
-                  </div>
-                  <span className="text-[9px] font-mono text-white/30 w-5 text-right shrink-0">{b.count}</span>
-                </div>
-              ))}
+          {/* ── Drop-off distribution tab ── */}
+          {tab === 'dropoff' && (
+            <div className="space-y-1.5">
+              {stats.dropBuckets.length > 0 ? (
+                <>
+                  <p className="text-[9px] text-white/20 font-body mb-2">
+                    At what point viewers stopped watching before the required threshold
+                  </p>
+                  {stats.dropBuckets.map(b => (
+                    <div key={b.bucket} className="flex items-center gap-2">
+                      <span className="text-[9px] font-mono text-white/30 w-14 shrink-0">{b.bucket}</span>
+                      <div className="flex-1 h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-red-500/60 to-amber-500/60 transition-all duration-500"
+                          style={{ width: `${(b.count / maxDrop) * 100}%` }}
+                        />
+                      </div>
+                      <span className="text-[9px] font-mono text-red-400/60 w-6 text-right shrink-0">{b.count}</span>
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <p className="text-[10px] text-white/20 font-body py-2">No drop-off data yet.</p>
+              )}
             </div>
-          ) : (
-            <p className="text-[10px] text-white/20 font-body">No drop-off data yet.</p>
           )}
+
+          {/* ── Daily trend tab ── */}
+          {tab === 'trend' && (
+            <div className="space-y-1">
+              {stats.trend.length > 0 ? (
+                <>
+                  <p className="text-[9px] text-white/20 font-body mb-2">
+                    Daily views vs completions (last 30 days)
+                  </p>
+                  <div className="flex items-end gap-1 h-16">
+                    {stats.trend.map(r => (
+                      <div key={r.day} className="flex-1 flex flex-col items-center gap-0.5 group relative"
+                        title={`${r.day}: ${r.views} views, ${r.completed} completed, ${r.dropped} dropped`}>
+                        {/* Views bar (background) */}
+                        <div className="w-full rounded-sm bg-white/[0.08] relative overflow-hidden"
+                          style={{ height: `${(r.views / maxTrend) * 56}px`, minHeight: '2px' }}>
+                          {/* Completed fill */}
+                          <div
+                            className="absolute bottom-0 left-0 right-0 rounded-sm bg-accent-500/60"
+                            style={{ height: `${r.views > 0 ? (r.completed / r.views) * 100 : 0}%` }}
+                          />
+                        </div>
+                        {/* Day label — show every 5th */}
+                        {stats.trend.indexOf(r) % 5 === 0 && (
+                          <span className="text-[7px] font-mono text-white/15 mt-0.5 whitespace-nowrap">
+                            {r.day.slice(5)}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-3 mt-1">
+                    <div className="flex items-center gap-1">
+                      <div className="w-2 h-2 rounded-sm bg-white/[0.15]" />
+                      <span className="text-[8px] text-white/25 font-body">Views</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <div className="w-2 h-2 rounded-sm bg-accent-500/60" />
+                      <span className="text-[8px] text-white/25 font-body">Completed</span>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <p className="text-[10px] text-white/20 font-body py-2">No trend data in the last 30 days.</p>
+              )}
+            </div>
+          )}
+
         </div>
       )}
     </div>
@@ -826,7 +954,7 @@ function CampaignCard({
       </div>
 
       {/* Drop-off analytics (lazy-loaded on demand) */}
-      <DropOffPanel campaignId={c.id} />
+      <VideoEngagementPanel campaignId={c.id} />
     </div>
   );
 }

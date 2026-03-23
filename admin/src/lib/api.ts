@@ -148,6 +148,19 @@ export const api = {
       buckets: Array<{ bucket: string; count: number }>;
     } }>(`/campaigns/${campaignId}/dropoff`),
 
+  engagementStats: (campaignId: string) =>
+    req<{ stats: {
+      summary: {
+        total_views: number; completed: number; dropped_off: number;
+        still_watching: number; avg_watch_pct: number | null;
+        avg_completion_pct: number | null; avg_drop_pct: number | null;
+        completion_rate: number | null; drop_rate: number | null;
+      };
+      trend: Array<{ day: string; views: number; completed: number; dropped: number }>;
+      dropBuckets: Array<{ bucket: string; count: number }>;
+      completionBuckets: Array<{ bucket: string; count: number }>;
+    } }>(`/campaigns/${campaignId}/engagement`),
+
   getSurvey: (campaignId: string) =>
     req<{ survey: Survey | null }>(`/campaigns/${campaignId}/survey`).then(r => r.survey),
 

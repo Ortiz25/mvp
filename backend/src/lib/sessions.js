@@ -237,38 +237,82 @@ function markVideoDropOff(sessionId) {
   db.close();
 }
 
-function getVideoDropOffStats(campaignId = null) {
-  const db = getDb();
-  const where = campaignId ? `WHERE campaign_id=?` : '';
+function getVideoEngagementStats(campaignId = null) {
+  const db     = getDb();
+  const where  = campaignId ? 'WHERE vp.campaign_id=?' : '';
+  const wAnd   = campaignId ? 'AND vp.campaign_id=?'   : '';
   const params = campaignId ? [campaignId] : [];
-  const rows = db.prepare(`
+
+  // ── Summary ─────────────────────────────────────────────────────────────
+  const summary = db.prepare(`
     SELECT
-      COUNT(*) as total_views,
-      SUM(completed) as completed,
-      SUM(dropped_off) as dropped_off,
-      ROUND(AVG(CASE WHEN dropped_off=1 THEN drop_pct END) * 100, 1) as avg_drop_pct,
-      ROUND(AVG(watched_pct) * 100, 1) as avg_watch_pct
-    FROM video_progress ${where}
+      COUNT(*)                                                                AS total_views,
+      SUM(vp.completed)                                                       AS completed,
+      SUM(vp.dropped_off)                                                     AS dropped_off,
+      COUNT(*) - SUM(vp.completed) - SUM(vp.dropped_off)                     AS still_watching,
+      ROUND(AVG(vp.watched_pct) * 100, 1)                                    AS avg_watch_pct,
+      ROUND(AVG(CASE WHEN vp.completed   = 1 THEN vp.watched_pct END) * 100, 1) AS avg_completion_pct,
+      ROUND(AVG(CASE WHEN vp.dropped_off = 1 THEN vp.drop_pct   END) * 100, 1) AS avg_drop_pct,
+      ROUND(CAST(SUM(vp.completed)   AS REAL) / NULLIF(COUNT(*), 0) * 100, 1)  AS completion_rate,
+      ROUND(CAST(SUM(vp.dropped_off) AS REAL) / NULLIF(COUNT(*), 0) * 100, 1)  AS drop_rate
+    FROM video_progress vp ${where}
   `).get(...params);
-  // Bucket distribution: 0-10%, 10-25%, 25-50%, 50-75%, 75-90%, 90-100%
-  const buckets = db.prepare(`
+
+  // ── Daily trend (last 30 days) ───────────────────────────────────────────
+  const trend = db.prepare(`
+    SELECT
+      DATE(vp.updated_at) AS day,
+      COUNT(*)            AS views,
+      SUM(vp.completed)   AS completed,
+      SUM(vp.dropped_off) AS dropped
+    FROM video_progress vp
+    WHERE vp.updated_at >= DATE('now', '-30 days') ${wAnd}
+    GROUP BY day
+    ORDER BY day ASC
+  `).all(...params);
+
+  // ── Drop-off buckets ──────────────────────────────────────────────────────
+  const dropBuckets = db.prepare(`
     SELECT
       CASE
-        WHEN drop_pct < 0.10 THEN '0-10%'
-        WHEN drop_pct < 0.25 THEN '10-25%'
-        WHEN drop_pct < 0.50 THEN '25-50%'
-        WHEN drop_pct < 0.75 THEN '50-75%'
-        WHEN drop_pct < 0.90 THEN '75-90%'
+        WHEN vp.drop_pct < 0.10 THEN '0-10%'
+        WHEN vp.drop_pct < 0.25 THEN '10-25%'
+        WHEN vp.drop_pct < 0.50 THEN '25-50%'
+        WHEN vp.drop_pct < 0.75 THEN '50-75%'
+        WHEN vp.drop_pct < 0.90 THEN '75-90%'
         ELSE '90-100%'
-      END as bucket,
-      COUNT(*) as count
-    FROM video_progress
-    WHERE dropped_off=1 ${campaignId ? 'AND campaign_id=?' : ''}
+      END AS bucket,
+      COUNT(*) AS count
+    FROM video_progress vp
+    WHERE vp.dropped_off = 1 ${wAnd}
     GROUP BY bucket
-    ORDER BY MIN(drop_pct)
+    ORDER BY MIN(vp.drop_pct)
   `).all(...params);
+
+  // ── Completion depth buckets (how far completers watched) ─────────────────
+  const completionBuckets = db.prepare(`
+    SELECT
+      CASE
+        WHEN vp.watched_pct < 0.85 THEN 'Just passed'
+        WHEN vp.watched_pct < 0.92 THEN '85-92%'
+        WHEN vp.watched_pct < 0.97 THEN '92-97%'
+        ELSE '97-100%'
+      END AS bucket,
+      COUNT(*) AS count
+    FROM video_progress vp
+    WHERE vp.completed = 1 ${wAnd}
+    GROUP BY bucket
+    ORDER BY MIN(vp.watched_pct)
+  `).all(...params);
+
   db.close();
-  return { ...rows, buckets };
+  return { summary, trend, dropBuckets, completionBuckets };
+}
+
+// Backward-compat alias used by existing /dropoff admin route
+function getVideoDropOffStats(campaignId = null) {
+  const s = getVideoEngagementStats(campaignId);
+  return { ...s.summary, buckets: s.dropBuckets };
 }
 
 function revokeSession(id) {
@@ -330,5 +374,5 @@ module.exports = {
   getOrCreateSession, getSession, isSessionActive,
   markVideoWatched, markSurveyDone, markAccessGranted,
   revokeSession, getAllSessions, getStats, getSurveyAggregates,
-  upsertVideoProgress, markVideoDropOff, getVideoDropOffStats,
+  upsertVideoProgress, markVideoDropOff, getVideoDropOffStats, getVideoEngagementStats,
 };
