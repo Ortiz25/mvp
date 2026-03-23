@@ -60,13 +60,21 @@ export function ConnectingPage() {
     if (loading) return;
     if (!status) return;
 
-    if (status.accessGranted || status.active) {
-      // Session is live — make sure error screen is not showing
+    // Session is active (granted AND not expired)
+    if (status.active) {
       setGrantError(false);
-    } else {
-      // Refresh completed, session genuinely not granted
-      setGrantError(true);
+      return;
     }
+
+    // Session was granted but has since expired — redirect to picker
+    // This handles manual navigation to /connecting after session ends.
+    if (status.accessGranted && !status.active) {
+      navigate('/', { replace: true });
+      return;
+    }
+
+    // Refresh completed, session genuinely not granted
+    setGrantError(true);
   }, [resolving, loading, status]);
 
   // ── Fire CoovaChilli loggedin once ────────────────────────────────────
@@ -87,7 +95,10 @@ export function ConnectingPage() {
     const id = setInterval(() => {
       const next = calcTimeLeft(expiresAt, sessionHours);
       setTl(next);
-      if (next.expired) navigate('/', { replace: true });
+      if (next.expired) {
+        clearInterval(id);
+        navigate('/', { replace: true });
+      }
     }, 1000);
     return () => clearInterval(id);
   }, [expiresAt, sessionHours]);
@@ -99,6 +110,8 @@ export function ConnectingPage() {
 
   // Show error only when: not loading, not granted, and error flag set
   // The extra !status?.accessGranted guard is a final safety net
+  // Show error only for a session that was never granted (not for expired sessions
+  // which are handled by the navigate() in the access check effect above)
   const showError = !stillLoading && grantError && !status?.accessGranted && !status?.active;
 
   if (showError) {

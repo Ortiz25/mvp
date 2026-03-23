@@ -284,6 +284,7 @@ router.get('/:slug/status', async (req, res) => {
 
   const session = getOrCreateSession(ip, c.id, mac, dst, challenge, c.watch_frequency || 'once_per_day');
 
+  const sessionActive = isSessionActive(session);
   res.json({
     sessionId:      session.id,
     campaignId:     c.id,
@@ -294,8 +295,8 @@ router.get('/:slug/status', async (req, res) => {
     requireVideo:   c.require_video  !== 0,
     videoWatched:   session.video_watched,
     surveyDone:     session.survey_done,
-    accessGranted:  session.access_granted,
-    active:         isSessionActive(session),
+    accessGranted:  sessionActive,   // false when expired, even if DB column is 1
+    active:         sessionActive,
     expiresAt:      toISO(session.expires_at),
     mac:            session.mac_address,
     dst:            session.dst_url,
