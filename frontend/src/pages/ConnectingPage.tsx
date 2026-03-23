@@ -9,15 +9,11 @@ const OFFLINE_APPS = [
 ];
 
 export function ConnectingPage() {
-  const { status, config, refresh, selectedSlug, resolving, loading } = usePortal();
+  const { status, config, refresh, selectedSlug, resolving, loading, setStatus } = usePortal();
   const navigate      = useNavigate();
   const loggedinFired = useRef(false);
   const refreshFired  = useRef(false);
-
-  // True only when we've completed our own refresh AND status came back not-granted.
-  // Cleared immediately if status later shows accessGranted (handles race where
-  // stale status fires the check before the fresh granted status arrives).
-  const [grantError, setGrantError] = useState(false);
+  const [grantError,  setGrantError] = useState(false);
 
   const sessionHours = config?.campaign?.sessionHours ?? 1;
   const expiresAt = status?.expiresAt ?? (
@@ -38,54 +34,53 @@ export function ConnectingPage() {
     if (refreshFired.current) return;
     if (resolving) return;
     if (!selectedSlug) return;
-
     refreshFired.current = true;
     refresh();
   }, [selectedSlug, resolving]);
 
-  // ── Access check ───────────────────────────────────────────────────────
-  // Rules:
-  //   1. Never evaluate until our own refresh() has been called AND completed
-  //      (!loading). This prevents reading the stale pre-grant status that was
-  //      in context when we navigated here.
-  //   2. If status shows accessGranted — always clear grantError immediately.
-  //      This handles the race where grantError was set from a stale status,
-  //      then status updated to granted. The error screen must never show
-  //      when the session is actually live (see screenshot bug).
-  //   3. Only set grantError when refresh is fully done and status is
-  //      definitively not granted.
+  // ── Session state check ────────────────────────────────────────────────
   useEffect(() => {
     if (resolving) return;
     if (!status) return;
 
-    // ── Expiry redirect: fire as soon as status is known, don't wait for
-    // refresh to complete. This prevents the spinner loop:
-    //   ConnectingPage mounts → stale context has active=false → spinner
-    //   → refresh completes → still active=false → navigate('/') →
-    //   PickerPage → sees accessGranted=true (stale) → navigate('/connecting') → loop
-    //
-    // Backend now returns accessGranted=sessionActive, so once expired,
-    // both active and accessGranted are false. We can redirect immediately.
-    if (!status.active && !status.accessGranted) {
-      // If we haven't refreshed yet, we might be reading stale context —
-      // wait for our own refresh to confirm before showing error.
-      if (!refreshFired.current || loading) return;
+    // Session is live — all good
+    if (status.active) {
+      setGrantError(false);
+      return;
+    }
+
+    // Not active — but wait for our refresh to confirm (avoid acting on stale context)
+    if (!refreshFired.current || loading) return;
+
+    // After refresh: truly not granted (never was)
+    if (!status.accessGranted) {
       setGrantError(true);
       return;
     }
 
-    // Session granted but expired (accessGranted=true in stale context, active=false)
-    // Redirect immediately without spinning.
-    if (!status.active && status.accessGranted) {
-      navigate('/', { replace: true });
-      return;
-    }
-
-    // Session is live — clear any error
-    if (status.active) {
-      setGrantError(false);
-    }
+    // After refresh: was granted but expired (accessGranted=true from stale context,
+    // active=false). Clear status and go to picker.
+    setStatus(null);
+    navigate('/', { replace: true });
   }, [resolving, loading, status]);
+
+  // ── Countdown ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!expiresAt) return;
+    setTl(calcTimeLeft(expiresAt, sessionHours));
+    const id = setInterval(() => {
+      const next = calcTimeLeft(expiresAt, sessionHours);
+      setTl(next);
+      if (next.expired) {
+        clearInterval(id);
+        // Clear status from context so PickerPage doesn't see stale
+        // accessGranted=true and redirect back here
+        setStatus(null);
+        navigate('/', { replace: true });
+      }
+    }, 1000);
+    return () => clearInterval(id);
+  }, [expiresAt, sessionHours]);
 
   // ── Fire CoovaChilli loggedin once ────────────────────────────────────
   useEffect(() => {
@@ -98,31 +93,9 @@ export function ConnectingPage() {
     }, 800);
   }, []);
 
-  // ── Live countdown ─────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!expiresAt) return;
-    setTl(calcTimeLeft(expiresAt, sessionHours));
-    const id = setInterval(() => {
-      const next = calcTimeLeft(expiresAt, sessionHours);
-      setTl(next);
-      if (next.expired) {
-        clearInterval(id);
-        navigate('/', { replace: true });
-      }
-    }, 1000);
-    return () => clearInterval(id);
-  }, [expiresAt, sessionHours]);
-
   const fmt2 = (n: number) => String(n).padStart(2, '0');
-
-  // Show spinner while resolving, loading, no slug, or status not yet arrived
   const stillLoading = resolving || loading || !selectedSlug || (!status && selectedSlug !== null);
-
-  // Show error only when: not loading, not granted, and error flag set
-  // The extra !status?.accessGranted guard is a final safety net
-  // Show error only for a session that was never granted (not for expired sessions
-  // which are handled by the navigate() in the access check effect above)
-  const showError = !stillLoading && grantError && !status?.accessGranted && !status?.active;
+  const showError    = !stillLoading && grantError && !status?.active;
 
   if (showError) {
     return (
@@ -141,21 +114,17 @@ export function ConnectingPage() {
           </h2>
           <p className="text-sm text-white/40 font-body max-w-xs">
             The Wi-Fi gateway didn't open your connection.
-            This usually means the session timed out — please try again.
+            Please try again.
           </p>
         </div>
         <div className="flex flex-col gap-2 w-full">
           <button
-            onClick={() => {
-              setGrantError(false);
-              refreshFired.current = false;
-              refresh();
-            }}
+            onClick={() => { setGrantError(false); refreshFired.current = false; refresh(); }}
             className="btn-primary flex items-center justify-center gap-2">
             ↺ Retry
           </button>
           <button
-            onClick={() => navigate('/', { replace: true })}
+            onClick={() => { setStatus(null); navigate('/', { replace: true }); }}
             className="btn btn-surface w-full justify-center py-2.5">
             ← Back to Campaigns
           </button>
@@ -166,8 +135,6 @@ export function ConnectingPage() {
 
   return (
     <div className="flex flex-col px-5 py-6 gap-5 animate-fade-up">
-
-      {/* ── Connected hero ── */}
       <div className="flex flex-col items-center gap-3 pt-2">
         <div className="relative">
           <div className="absolute inset-0 rounded-full bg-signal/20 animate-ping-slow"/>
@@ -193,13 +160,9 @@ export function ConnectingPage() {
         </div>
       </div>
 
-      {/* ── Time remaining card ── */}
       {!stillLoading && tl && expiresAt && (
         <div className={`rounded-xl border px-5 py-4 transition-colors duration-700
-          ${tl.urgent && !tl.expired
-            ? 'bg-red-500/[0.07] border-red-500/20'
-            : 'bg-signal/[0.06] border-signal/20'}`}>
-
+          ${tl.urgent && !tl.expired ? 'bg-red-500/[0.07] border-red-500/20' : 'bg-signal/[0.06] border-signal/20'}`}>
           <div className="flex items-center justify-between mb-3">
             <p className="text-[9px] font-display font-bold uppercase tracking-[0.2em] text-white/40">
               Session Time Remaining
@@ -209,40 +172,30 @@ export function ConnectingPage() {
               {tl.expired ? 'Expired' : tl.urgent ? '⚠ Expiring soon' : 'Active'}
             </span>
           </div>
-
-          <div className={`font-mono text-4xl font-bold tabular-nums text-center mb-3 transition-colors duration-700
+          <div className={`font-mono text-4xl font-bold tabular-nums text-center mb-3
             ${tl.expired ? 'text-white/20' : tl.urgent ? 'text-red-400' : 'text-white'}`}>
             {tl.h > 0 && `${tl.h}:`}{fmt2(tl.m)}:{fmt2(tl.s)}
           </div>
-
           <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all duration-1000
-                ${tl.expired ? 'bg-white/10' : tl.urgent ? 'bg-red-400' : 'bg-gradient-to-r from-signal to-aqua'}`}
-              style={{ width: `${Math.round(tl.pct * 100)}%` }}
-            />
+            <div className={`h-full rounded-full transition-all duration-1000
+              ${tl.expired ? 'bg-white/10' : tl.urgent ? 'bg-red-400' : 'bg-gradient-to-r from-signal to-aqua'}`}
+              style={{ width: `${Math.round(tl.pct * 100)}%` }}/>
           </div>
           <p className="text-[10px] text-white/25 font-body text-center mt-2">
-            {tl.expired
-              ? 'Your session has ended'
+            {tl.expired ? 'Your session has ended'
               : `${Math.ceil(tl.totalMs / 60000)} min of ${sessionHours * 60} min remaining`}
           </p>
         </div>
       )}
 
-      {/* No expiry info — chilli fallback session */}
       {!stillLoading && !expiresAt && status?.accessGranted && (
         <div className="rounded-xl border border-signal/20 bg-signal/[0.06] px-5 py-4 text-center">
-          <p className="text-[11px] text-white/40 font-body">
-            Session active · expiry time not available
-          </p>
+          <p className="text-[11px] text-white/40 font-body">Session active · expiry time not available</p>
         </div>
       )}
 
-      {/* ── Offline apps toggle ── */}
       <div className="rounded-xl border border-white/[0.07] overflow-hidden">
-        <button
-          onClick={() => setShowApps(s => !s)}
+        <button onClick={() => setShowApps(s => !s)}
           className="w-full flex items-center justify-between px-4 py-3.5
             bg-white/[0.02] hover:bg-white/[0.04] transition-colors duration-150 active:bg-white/[0.06]">
           <div className="flex items-center gap-2.5">
@@ -254,13 +207,11 @@ export function ConnectingPage() {
               <p className="text-[9px] text-white/30 font-body mt-0.5">Available without internet</p>
             </div>
           </div>
-          <svg
-            className={`w-4 h-4 text-white/25 transition-transform duration-200 ${showApps ? 'rotate-180' : ''}`}
+          <svg className={`w-4 h-4 text-white/25 transition-transform duration-200 ${showApps ? 'rotate-180' : ''}`}
             viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
             <polyline points="6,9 12,15 18,9"/>
           </svg>
         </button>
-
         {showApps && (
           <div className="border-t border-white/[0.05] bg-white/[0.01] p-3 space-y-2">
             {OFFLINE_APPS.map(({ name, desc, url, Icon }) => (
@@ -278,8 +229,7 @@ export function ConnectingPage() {
                 <IconArrow className="w-3.5 h-3.5 text-white/20 group-hover:text-white/50 transition-colors shrink-0"/>
               </a>
             ))}
-            <button
-              onClick={() => navigate('/offline')}
+            <button onClick={() => navigate('/offline')}
               className="w-full text-center text-[10px] text-signal/60 font-display font-bold
                 uppercase tracking-wider py-2 hover:text-signal transition-colors">
               View all apps →
@@ -288,15 +238,12 @@ export function ConnectingPage() {
         )}
       </div>
 
-      {/* ── Browse now ── */}
-      <a
-        href="https://google.com"
+      <a href="https://google.com"
         className="w-full py-4 rounded-xl font-display font-bold text-base text-center
           bg-gradient-to-r from-signal to-aqua text-void shadow-md
           active:scale-[0.98] transition-transform duration-150 no-underline block">
         Start Browsing →
       </a>
-
     </div>
   );
 }

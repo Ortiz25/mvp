@@ -82,7 +82,7 @@ function CampaignCard({ camp, selected, onClick }: {
 }
 
 export function PickerPage() {
-  const { hotspot, selectCampaign, refresh, status, selectedSlug, resolving } = usePortal();
+  const { hotspot, selectCampaign, refresh, status, setStatus, selectedSlug, resolving } = usePortal();
   // Ref mirrors status so handleStart can read it synchronously after refresh()
   const statusRef = useRef(status);
   useEffect(() => { statusRef.current = status; }, [status]);
@@ -119,14 +119,17 @@ export function PickerPage() {
   }, [selectedSlug, resolving, status, loadingCampaigns]);
 
   // ── Redirect if already active ────────────────────────────────────────
-  // Only redirect when status.active is true — which means the session is
-  // granted AND not expired. Never redirect on accessGranted alone because
-  // the backend now returns accessGranted=false for expired sessions, but
-  // stale context may still carry the old accessGranted=true value until
-  // refresh() completes. Using active prevents the redirect loop.
+  // Only redirect when status.active is true — session is live and not expired.
+  // If status is present but not active, clear it so we start fresh.
+  // This prevents stale context (accessGranted=true, active=false) from
+  // causing redirect loops after session expiry.
   useEffect(() => {
-    if (status?.active) {
+    if (!status) return;
+    if (status.active) {
       navigate('/connecting', { replace: true });
+    } else {
+      // Status is stale or expired — clear it so PickerPage shows cleanly
+      setStatus(null);
     }
   }, [status]);
 
