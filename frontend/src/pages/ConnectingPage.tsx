@@ -244,6 +244,14 @@ export function ConnectingPage() {
           active:scale-[0.98] transition-transform duration-150 no-underline block">
         Start Browsing →
       </a>
+
+      {/* Safety net — lets users go back to pick a different campaign */}
+      <button
+        onClick={() => { setStatus(null); navigate('/', { replace: true }); }}
+        className="w-full text-center text-[10px] text-white/20 font-body py-1
+          hover:text-white/40 transition-colors duration-150">
+        ← Back to Campaigns
+      </button>
     </div>
   );
 }
