@@ -222,7 +222,7 @@ export function ConnectingPage() {
       </div>
 
       {/* ── Browse now ── */}
-      
+      <a
         href="https://google.com"
         className="w-full py-4 rounded-xl font-display font-bold text-base text-center
           bg-gradient-to-r from-signal to-aqua text-void shadow-md
