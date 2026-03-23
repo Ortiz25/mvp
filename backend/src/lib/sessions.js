@@ -202,6 +202,75 @@ function markAccessGranted(id, hours) {
   db.close();
 }
 
+// ── Video progress / drop-off tracking ────────────────────────────────────
+
+function upsertVideoProgress(sessionId, campaignId, watchedPct, completed = false) {
+  const db = getDb();
+  const existing = db.prepare('SELECT * FROM video_progress WHERE session_id=?').get(sessionId);
+  if (!existing) {
+    db.prepare(
+      `INSERT INTO video_progress(id,session_id,campaign_id,watched_pct,last_pct,completed,updated_at)
+       VALUES(?,?,?,?,?,?,datetime('now'))`
+    ).run(uuidv4(), sessionId, campaignId, watchedPct, watchedPct, completed ? 1 : 0);
+  } else {
+    // Only update watched_pct if moving forward (never rewind progress)
+    const newPct = Math.max(existing.watched_pct, watchedPct);
+    db.prepare(`
+      UPDATE video_progress
+      SET watched_pct=?, last_pct=?, completed=?, updated_at=datetime('now')
+      WHERE session_id=?
+    `).run(newPct, watchedPct, completed ? 1 : existing.completed, sessionId);
+  }
+  db.close();
+}
+
+function markVideoDropOff(sessionId) {
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM video_progress WHERE session_id=?').get(sessionId);
+  if (row && !row.completed && !row.dropped_off) {
+    db.prepare(`
+      UPDATE video_progress
+      SET dropped_off=1, drop_pct=last_pct, updated_at=datetime('now')
+      WHERE session_id=?
+    `).run(sessionId);
+  }
+  db.close();
+}
+
+function getVideoDropOffStats(campaignId = null) {
+  const db = getDb();
+  const where = campaignId ? `WHERE campaign_id=?` : '';
+  const params = campaignId ? [campaignId] : [];
+  const rows = db.prepare(`
+    SELECT
+      COUNT(*) as total_views,
+      SUM(completed) as completed,
+      SUM(dropped_off) as dropped_off,
+      ROUND(AVG(CASE WHEN dropped_off=1 THEN drop_pct END) * 100, 1) as avg_drop_pct,
+      ROUND(AVG(watched_pct) * 100, 1) as avg_watch_pct
+    FROM video_progress ${where}
+  `).get(...params);
+  // Bucket distribution: 0-10%, 10-25%, 25-50%, 50-75%, 75-90%, 90-100%
+  const buckets = db.prepare(`
+    SELECT
+      CASE
+        WHEN drop_pct < 0.10 THEN '0-10%'
+        WHEN drop_pct < 0.25 THEN '10-25%'
+        WHEN drop_pct < 0.50 THEN '25-50%'
+        WHEN drop_pct < 0.75 THEN '50-75%'
+        WHEN drop_pct < 0.90 THEN '75-90%'
+        ELSE '90-100%'
+      END as bucket,
+      COUNT(*) as count
+    FROM video_progress
+    WHERE dropped_off=1 ${campaignId ? 'AND campaign_id=?' : ''}
+    GROUP BY bucket
+    ORDER BY MIN(drop_pct)
+  `).all(...params);
+  db.close();
+  return { ...rows, buckets };
+}
+
 function revokeSession(id) {
   const db = getDb();
   db.prepare(`UPDATE sessions SET access_granted=0, expires_at=NULL, updated_at=datetime('now') WHERE id=?`).run(id);
@@ -261,4 +330,5 @@ module.exports = {
   getOrCreateSession, getSession, isSessionActive,
   markVideoWatched, markSurveyDone, markAccessGranted,
   revokeSession, getAllSessions, getStats, getSurveyAggregates,
+  upsertVideoProgress, markVideoDropOff, getVideoDropOffStats,
 };

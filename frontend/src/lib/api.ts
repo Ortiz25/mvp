@@ -28,6 +28,7 @@ export interface PortalStatus {
   campaignSlug:  string;
   sessionHours:  number;
   watchFrequency: 'always' | 'once_per_day' | 'once_ever';
+  requireSurvey:  boolean;
   videoWatched:   boolean;
   surveyDone:     boolean;
   accessGranted: boolean;
@@ -45,7 +46,7 @@ export interface CampaignConfig {
   campaign: {
     id: string; slug: string; name: string; description: string;
     sponsor: string | null; primaryColor: string; accentColor: string;
-    sessionHours: number;
+    sessionHours: number; requireSurvey: boolean;
   };
   video: {
     id: string; title: string; url: string;
@@ -106,6 +107,12 @@ export const portalApi = {
 
   config: (slug: string) =>
     req<CampaignConfig>(`/api/${slug}/config`),
+
+  videoProgress: (slug: string, sessionId: string, watchedPct: number) =>
+    req<{ success: boolean }>(`/api/${slug}/video/progress`, {
+      method: 'POST',
+      body: JSON.stringify({ sessionId, watchedPct }),
+    }),
 
   videoComplete: (slug: string, sessionId: string, watchedPct: number) =>
     req<{ success: boolean }>(`/api/${slug}/video/complete`, {

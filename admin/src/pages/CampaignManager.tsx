@@ -397,6 +397,7 @@ function CampaignForm({
     active:          initial?.active          ?? 1,
     session_hours:   initial?.session_hours   ?? 8,
     watch_frequency: initial?.watch_frequency ?? 'once_per_day',
+    require_survey:  initial?.require_survey  ?? 1,
     start_date:      toInputDate(initial?.start_date),
     end_date:        toInputDate(initial?.end_date),
   });
@@ -415,6 +416,7 @@ function CampaignForm({
           active:          form.active,
           session_hours:   form.session_hours,
           watch_frequency: form.watch_frequency,
+          require_survey:  form.require_survey,
           start_date: fromInputDate(form.start_date),
           end_date:   fromInputDate(form.end_date),
         });
@@ -427,6 +429,7 @@ function CampaignForm({
           active:          form.active,
           session_hours:   form.session_hours,
           watch_frequency: form.watch_frequency,
+          require_survey:  form.require_survey,
           start_date: fromInputDate(form.start_date),
           end_date:   fromInputDate(form.end_date),
         });
@@ -539,6 +542,23 @@ function CampaignForm({
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
+                  <FieldLabel>Require Survey</FieldLabel>
+                  <select className="select" value={form.require_survey}
+                    onChange={e => upd('require_survey', parseInt(e.target.value))}>
+                    <option value={1}>Yes — survey required</option>
+                    <option value={0}>No — skip survey</option>
+                  </select>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+                  <p className="text-[10px] text-white/30 font-body leading-relaxed">
+                    {form.require_survey
+                      ? 'Users must complete survey before getting access.'
+                      : 'Access granted right after video — no survey shown.'}
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
                   <FieldLabel>Starts At</FieldLabel>
                   <input type="datetime-local" className="input"
                     value={form.start_date}
@@ -612,6 +632,101 @@ function CampaignForm({
   );
 }
 
+// ── Drop-off analytics panel ───────────────────────────────────────────────
+
+function DropOffPanel({ campaignId }: { campaignId: string }) {
+  const [stats,   setStats]   = useState<{
+    total_views: number; completed: number; dropped_off: number;
+    avg_drop_pct: number | null; avg_watch_pct: number | null;
+    buckets: Array<{ bucket: string; count: number }>;
+  } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [open,    setOpen]    = useState(false);
+
+  const load = async () => {
+    if (stats) { setOpen(o => !o); return; }
+    setLoading(true); setOpen(true);
+    try {
+      const r = await api.dropoffStats(campaignId);
+      setStats(r.stats);
+    } catch {}
+    finally { setLoading(false); }
+  };
+
+  const dropRate = stats && stats.total_views > 0
+    ? Math.round((stats.dropped_off / stats.total_views) * 100)
+    : null;
+
+  const maxBucket = stats?.buckets.reduce((m, b) => Math.max(m, b.count), 1) ?? 1;
+
+  return (
+    <div className="mt-3 border-t border-white/[0.05] pt-3">
+      <button
+        onClick={load}
+        className="flex items-center gap-1.5 text-[10px] font-display font-bold
+          text-white/30 hover:text-white/60 transition-colors duration-150">
+        <span>📉</span>
+        <span>Drop-off Analytics</span>
+        {!loading && <span className="ml-1 opacity-50">{open ? '▲' : '▼'}</span>}
+        {loading && <span className="w-3 h-3 rounded-full border border-current border-t-transparent animate-spin ml-1" />}
+      </button>
+
+      {open && stats && (
+        <div className="mt-2.5 space-y-2.5">
+          {/* Summary row */}
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              { l: 'Views',     v: stats.total_views },
+              { l: 'Completed', v: stats.completed },
+              { l: 'Drop Rate', v: dropRate !== null ? `${dropRate}%` : '—' },
+            ].map(({ l, v }) => (
+              <div key={l} className="bg-white/[0.03] rounded-lg p-2 text-center border border-white/[0.05]">
+                <p className="font-display font-bold text-sm text-white">{v}</p>
+                <p className="text-[9px] text-white/25 font-body uppercase tracking-wide">{l}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Avg metrics */}
+          {(stats.avg_drop_pct !== null || stats.avg_watch_pct !== null) && (
+            <div className="flex gap-3 text-[10px] font-body text-white/40">
+              {stats.avg_watch_pct !== null && (
+                <span>Avg watched: <span className="text-white/70 font-bold">{stats.avg_watch_pct}%</span></span>
+              )}
+              {stats.avg_drop_pct !== null && (
+                <span>Avg drop-off at: <span className="text-red-400/80 font-bold">{stats.avg_drop_pct}%</span></span>
+              )}
+            </div>
+          )}
+
+          {/* Bucket chart */}
+          {stats.buckets.length > 0 ? (
+            <div className="space-y-1">
+              <p className="text-[9px] font-display font-bold uppercase tracking-widest text-white/20 mb-1.5">
+                Drop-off distribution
+              </p>
+              {stats.buckets.map(b => (
+                <div key={b.bucket} className="flex items-center gap-2">
+                  <span className="text-[9px] font-mono text-white/30 w-14 shrink-0">{b.bucket}</span>
+                  <div className="flex-1 h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-red-500/60 to-amber-500/60 transition-all duration-500"
+                      style={{ width: `${(b.count / maxBucket) * 100}%` }}
+                    />
+                  </div>
+                  <span className="text-[9px] font-mono text-white/30 w-5 text-right shrink-0">{b.count}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[10px] text-white/20 font-body">No drop-off data yet.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Campaign card ──────────────────────────────────────────────────────────
 
 // Human-readable label + icon for watch_frequency values
@@ -675,13 +790,22 @@ function CampaignCard({
         ))}
       </div>
 
-      {/* Watch frequency + video indicator row */}
-      <div className="flex items-center justify-between gap-3 mb-4">
+      {/* Watch frequency + video + survey indicator row */}
+      <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
         {/* Frequency badge */}
         <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/[0.04]
           border border-white/[0.07]" title={freq.desc}>
           <span className="text-[11px]">{freq.icon}</span>
           <span className="text-[10px] font-display font-bold text-white/50">{freq.label}</span>
+        </div>
+        {/* Survey badge */}
+        <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/[0.04]
+          border border-white/[0.07]"
+          title={c.require_survey ? 'Survey required' : 'No survey'}>
+          <span className="text-[11px]">{c.require_survey ? '📝' : '⚡'}</span>
+          <span className="text-[10px] font-display font-bold text-white/50">
+            {c.require_survey ? 'Survey on' : 'No survey'}
+          </span>
         </div>
         {/* Video indicator */}
         <div className="flex items-center gap-1.5 text-[10px] font-body min-w-0">
@@ -700,6 +824,9 @@ function CampaignCard({
           {toggling ? <Spin sm /> : on ? '⏸ Deactivate' : '▶ Activate'}
         </button>
       </div>
+
+      {/* Drop-off analytics (lazy-loaded on demand) */}
+      <DropOffPanel campaignId={c.id} />
     </div>
   );
 }

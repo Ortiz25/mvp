@@ -9,6 +9,7 @@ const { getDb }  = require('../db/migrate');
 const { buildLogoutUrl, testConnection, listAuthorizedClients } = require('../lib/radius');
 const {
   getAllSessions, getStats, getSurveyAggregates, revokeSession, getSession,
+  getVideoDropOffStats,
 } = require('../lib/sessions');
 const {
   getAllCampaigns, getCampaignById, createCampaign, updateCampaign,
@@ -149,6 +150,13 @@ router.delete('/sessions/:id', async (req, res) => {
 
   res.json({ success: true, logoutUrl, note: 'Session revoked in DB. Visit logoutUrl to revoke on router.' });
 });
+
+// ── Video drop-off analytics ───────────────────────────────────────────────
+router.get('/campaigns/:campaignId/dropoff', (req, res) =>
+  res.json({ stats: getVideoDropOffStats(req.params.campaignId) }));
+
+router.get('/dropoff', (req, res) =>
+  res.json({ stats: getVideoDropOffStats(req.query.campaign || null) }));
 
 // ── Survey results ────────────────────────────────────────────────────────
 router.get('/survey/results', (req, res) =>

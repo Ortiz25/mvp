@@ -27,6 +27,7 @@ export interface Campaign {
   start_date:      string | null;
   end_date:        string | null;
   watch_frequency: 'always' | 'once_per_day' | 'once_ever';
+  require_survey:  number; // 1 = required, 0 = skip survey
   created_at: string; updated_at: string;
   video_required_pct: number; video_duration: number;
   video_filename: string | null; video_original: string | null;
@@ -139,6 +140,13 @@ export const api = {
 
   deleteVideo: (campaignId: string, videoId: string) =>
     req(`/campaigns/${campaignId}/videos/${videoId}`, { method: 'DELETE' }),
+
+  dropoffStats: (campaignId: string) =>
+    req<{ stats: {
+      total_views: number; completed: number; dropped_off: number;
+      avg_drop_pct: number | null; avg_watch_pct: number | null;
+      buckets: Array<{ bucket: string; count: number }>;
+    } }>(`/campaigns/${campaignId}/dropoff`),
 
   getSurvey: (campaignId: string) =>
     req<{ survey: Survey | null }>(`/campaigns/${campaignId}/survey`).then(r => r.survey),

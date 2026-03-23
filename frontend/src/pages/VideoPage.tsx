@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePortal } from '../context/SessionContext';
 import { portalApi } from '../lib/api';
@@ -8,11 +8,16 @@ export function VideoPage() {
   const { selectedSlug, status, config, loading, refresh } = usePortal();
   const navigate = useNavigate();
 
-  const videoRef     = useRef<HTMLVideoElement>(null);
-  const [watchedPct, setWatchedPct]   = useState(0);
+  const videoRef      = useRef<HTMLVideoElement>(null);
+  const [watchedPct,  setWatchedPct]  = useState(0);
   const [canContinue, setCanContinue] = useState(false);
   const [submitting,  setSubmitting]  = useState(false);
   const [error,       setError]       = useState('');
+
+  // Track whether the video was completed in THIS page visit.
+  // This prevents routing logic from treating a previous-cycle
+  // videoWatched=true (from DB) as "skip the video again".
+  const completedThisVisit = useRef(false);
 
   useEffect(() => {
     if (!selectedSlug) { navigate('/', { replace: true }); return; }
@@ -21,26 +26,70 @@ export function VideoPage() {
 
   useEffect(() => {
     if (loading) return;
+
+    // Already active — go to connecting
     if (status?.active || status?.accessGranted) {
       navigate('/connecting', { replace: true }); return;
     }
 
-    const freq = status?.watchFrequency ?? 'always';
+    const freq = status?.watchFrequency ?? 'once_per_day';
 
-    if (status?.videoWatched) {
+    // ── BUG FIX: 'always' mode ──────────────────────────────────────────
+    // In 'always' mode the DB may still show videoWatched=true from the
+    // previous grant cycle (needsNewSession resets only after access_granted=1
+    // AND the session has expired). Do NOT skip the video based on DB state
+    // alone — only navigate away once the user actually watches it THIS visit.
+    if (status?.videoWatched && !completedThisVisit.current) {
       if (freq === 'always') {
-        // always mode: video watched in this cycle, proceed to survey
-        navigate('/survey', { replace: true });
-      } else {
-        // once_ever or once_per_day: content already consumed.
-        // Send back to picker with a message — no free internet.
-        const msg = freq === 'once_ever'
-          ? "You have already watched this campaign's content. Pick another campaign to get access."
-          : "You have already watched today's content for this campaign. Come back tomorrow or pick another campaign.";
-        navigate('/', { replace: true, state: { notice: msg, dismissedSlug: selectedSlug } });
+        // Stay on video page — let them watch again. The DB flag is stale.
+        return;
       }
+      // once_per_day / once_ever: genuinely already watched
+      const msg = freq === 'once_ever'
+        ? "You have already watched this campaign's content. Pick another campaign to get access."
+        : "You have already watched today's content for this campaign. Come back tomorrow or pick another campaign.";
+      navigate('/', { replace: true, state: { notice: msg, dismissedSlug: selectedSlug } });
     }
   }, [loading, status]);
+
+  // ── Drop-off beacon ───────────────────────────────────────────────────
+  // Fires when user navigates away or hides the tab before completing video.
+  useEffect(() => {
+    if (!selectedSlug || !status?.sessionId) return;
+
+    const sendDropOff = () => {
+      if (completedThisVisit.current) return; // already finished, not a drop-off
+      const pct = videoRef.current
+        ? videoRef.current.currentTime / (videoRef.current.duration || 1)
+        : 0;
+      if (pct < 0.01) return; // never really started — don't record
+      try {
+        navigator.sendBeacon(
+          `/api/${selectedSlug}/video/dropoff`,
+          JSON.stringify({ sessionId: status.sessionId })
+        );
+      } catch {}
+    };
+
+    const onVisibility = () => { if (document.hidden) sendDropOff(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('beforeunload', sendDropOff);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('beforeunload', sendDropOff);
+    };
+  }, [selectedSlug, status?.sessionId]);
+
+  // ── Progress heartbeat (every 5s) ────────────────────────────────────
+  useEffect(() => {
+    if (!selectedSlug || !status?.sessionId) return;
+    const interval = setInterval(() => {
+      if (watchedPct > 0.01 && !completedThisVisit.current) {
+        portalApi.videoProgress(selectedSlug, status.sessionId, watchedPct).catch(() => {});
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [selectedSlug, status?.sessionId, watchedPct]);
 
   const requiredPct = config?.video?.requiredWatchPct ?? 0.8;
 
@@ -49,22 +98,33 @@ export function VideoPage() {
     if (!v || !v.duration) return;
     const pct = v.currentTime / v.duration;
     setWatchedPct(pct);
-    if (pct >= requiredPct) setCanContinue(true);
+    if (pct >= requiredPct && !canContinue) setCanContinue(true);
   };
 
-  const handleContinue = async () => {
+  const handleContinue = useCallback(async () => {
     if (!canContinue || !status || !selectedSlug || submitting) return;
     setSubmitting(true);
     setError('');
     try {
       await portalApi.videoComplete(selectedSlug, status.sessionId, watchedPct);
+      completedThisVisit.current = true;
       await refresh();
-      navigate('/survey', { replace: true });
+
+      // Decide next step based on campaign config
+      const requireSurvey = config?.campaign?.requireSurvey ?? status?.requireSurvey ?? true;
+      const hasSurveyQuestions = (config?.survey?.questions?.length ?? 0) > 0;
+
+      if (requireSurvey && hasSurveyQuestions) {
+        navigate('/survey', { replace: true });
+      } else {
+        // No survey required — go straight to connecting (SurveyPage doGrant logic)
+        navigate('/survey', { replace: true });
+      }
     } catch (e) {
       setSubmitting(false);
       setError(e instanceof Error ? e.message : 'Failed — try again');
     }
-  };
+  }, [canContinue, status, selectedSlug, submitting, watchedPct, config]);
 
   if (loading && !config) {
     return (
@@ -139,7 +199,7 @@ export function VideoPage() {
           </>
         ) : (
           <>
-            <span>{canContinue ? 'Continue to Survey' : `Watch ${Math.round(requiredPct * 100)}% to continue`}</span>
+            <span>{canContinue ? 'Continue' : `Watch ${Math.round(requiredPct * 100)}% to continue`}</span>
             {canContinue && <IconArrow className="w-4 h-4" />}
           </>
         )}

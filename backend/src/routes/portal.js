@@ -21,6 +21,7 @@ const {
   getOrCreateSession, getSession,
   markVideoWatched, markSurveyDone, markAccessGranted,
   isSessionActive, getAllSessions,
+  upsertVideoProgress, markVideoDropOff, getVideoDropOffStats,
 } = require('../lib/sessions');
 
 const { getDb } = require('../db/migrate');
@@ -287,6 +288,7 @@ router.get('/:slug/status', async (req, res) => {
     campaignSlug:   c.slug,
     sessionHours:   c.session_hours,
     watchFrequency: c.watch_frequency || 'once_per_day',
+    requireSurvey:  c.require_survey !== 0,
     videoWatched:   session.video_watched,
     surveyDone:     session.survey_done,
     accessGranted:  session.access_granted,
@@ -308,6 +310,7 @@ router.get('/:slug/config', (req, res) => {
       description: c.description, sponsor: c.sponsor,
       primaryColor: c.primary_color, accentColor: c.accent_color,
       sessionHours: c.session_hours,
+      requireSurvey: c.require_survey !== 0,
     },
     video: v ? {
       id: v.id, title: v.title,
@@ -326,6 +329,29 @@ router.get('/:slug/config', (req, res) => {
   });
 });
 
+// ── POST /api/:slug/video/progress ────────────────────────────────────────
+// Heartbeat from the video player (every ~5s). Tracks max watched position.
+router.post('/:slug/video/progress', (req, res) => {
+  const { sessionId, watchedPct } = req.body;
+  if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
+  const session = getSession(sessionId);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  const cfg      = getCampaignConfig(req.params.slug);
+  const required = cfg?.video?.required_watch_pct || 0.8;
+  const completed = (watchedPct || 0) >= required;
+  upsertVideoProgress(sessionId, session.campaign_id, watchedPct || 0, completed);
+  res.json({ success: true });
+});
+
+// ── POST /api/:slug/video/dropoff ─────────────────────────────────────────
+// Called via sendBeacon when user leaves before completing the video.
+router.post('/:slug/video/dropoff', (req, res) => {
+  const { sessionId } = req.body;
+  if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
+  markVideoDropOff(sessionId);
+  res.json({ success: true });
+});
+
 // ── POST /api/:slug/video/complete ────────────────────────────────────────
 router.post('/:slug/video/complete', (req, res) => {
   const { sessionId, watchedPct } = req.body;
@@ -339,6 +365,7 @@ router.post('/:slug/video/complete', (req, res) => {
       error: 'Insufficient watch time', required, watched: watchedPct,
     });
   markVideoWatched(sessionId);
+  upsertVideoProgress(sessionId, session.campaign_id, watchedPct || required, true);
   res.json({ success: true });
 });
 
@@ -362,7 +389,8 @@ router.post('/:slug/access/grant', async (req, res) => {
   const session = getSession(sessionId);
   if (!session)               return res.status(404).json({ error: 'Session not found' });
   if (!session.video_watched) return res.status(403).json({ error: 'Must watch video first' });
-  if (!session.survey_done)   return res.status(403).json({ error: 'Must complete survey first' });
+  if (c.require_survey && !session.survey_done)
+    return res.status(403).json({ error: 'Must complete survey first' });
 
   const c = getCampaignBySlug(req.params.slug);
   if (!c) return res.status(404).json({ error: 'Campaign not found' });
