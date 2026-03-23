@@ -2,6 +2,7 @@
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 
 const { cleanupExpiredSessions, deactivateExpiredCampaigns } = require('./lib/sessionCleanup');
+const { sweepStaleVideoProgress } = require('./lib/sessions');
 const servicesRouter = require('./routes/services');
 
 const express   = require('express');
@@ -23,14 +24,16 @@ migrate();
 // Run once immediately on startup so expired campaigns are deactivated
 // before the first request is served — no waiting for the first interval tick.
 deactivateExpiredCampaigns();
+sweepStaleVideoProgress(); // classify any views abandoned before last restart
 
 // Every 60 seconds:
-//   1. Auto-deactivate campaigns whose end_date has passed (identical to
-//      pressing Deactivate in the admin panel — sets active=0 in the DB)
+//   1. Auto-deactivate campaigns whose end_date has passed
 //   2. Revoke expired client sessions from chilli + RADIUS DB
+//   3. Mark video_progress rows with no heartbeat for >10 min as drop-offs
 setInterval(async () => {
   deactivateExpiredCampaigns();
   await cleanupExpiredSessions();
+  sweepStaleVideoProgress();
 }, 60 * 1000);
 
 const app = express();

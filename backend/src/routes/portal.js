@@ -362,9 +362,16 @@ router.post('/:slug/video/progress', (req, res) => {
 
 // ── POST /api/:slug/video/dropoff ─────────────────────────────────────────
 // Called via sendBeacon when user leaves before completing the video.
+// The frontend sends the current watchedPct so we record the exact position.
 router.post('/:slug/video/dropoff', (req, res) => {
-  const { sessionId } = req.body;
+  const { sessionId, watchedPct } = req.body;
   if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
+  const session = getSession(sessionId);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  // Update last known position before marking drop-off
+  if (watchedPct != null && watchedPct > 0) {
+    upsertVideoProgress(sessionId, session.campaign_id, watchedPct, false);
+  }
   markVideoDropOff(sessionId);
   res.json({ success: true });
 });
@@ -406,11 +413,13 @@ router.post('/:slug/access/grant', async (req, res) => {
   const session = getSession(sessionId);
   if (!session)               return res.status(404).json({ error: 'Session not found' });
   if (!session.video_watched) return res.status(403).json({ error: 'Must watch video first' });
-  if (c.require_survey && !session.survey_done)
-    return res.status(403).json({ error: 'Must complete survey first' });
 
+  // Fetch campaign FIRST — require_survey check depends on it
   const c = getCampaignBySlug(req.params.slug);
   if (!c) return res.status(404).json({ error: 'Campaign not found' });
+
+  if (c.require_survey && !session.survey_done)
+    return res.status(403).json({ error: 'Must complete survey first' });
 
   const clientIp = getClientIp(req);
   const hours    = c.session_hours || 1;

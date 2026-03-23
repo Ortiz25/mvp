@@ -315,6 +315,31 @@ function getVideoDropOffStats(campaignId = null) {
   return { ...s.summary, buckets: s.dropBuckets };
 }
 
+// ── Sweep stale "still watching" rows ────────────────────────────────────
+// Any video_progress row that is not completed and not already marked as
+// a drop-off, but hasn't received a heartbeat in >10 minutes, is almost
+// certainly an abandoned view. Mark it as a drop-off at its last known position.
+function sweepStaleVideoProgress() {
+  const db = getDb();
+  const stale = db.prepare(`
+    SELECT id, last_pct FROM video_progress
+    WHERE completed   = 0
+      AND dropped_off = 0
+      AND updated_at  < datetime('now', '-10 minutes')
+  `).all();
+  const update = db.prepare(`
+    UPDATE video_progress
+    SET dropped_off = 1,
+        drop_pct    = last_pct,
+        updated_at  = datetime('now')
+    WHERE id = ?
+  `);
+  for (const row of stale) update.run(row.id);
+  db.close();
+  if (stale.length > 0) console.log(`[SWEEP] Marked ${stale.length} stale view(s) as drop-offs`);
+  return stale.length;
+}
+
 function revokeSession(id) {
   const db = getDb();
   db.prepare(`UPDATE sessions SET access_granted=0, expires_at=NULL, updated_at=datetime('now') WHERE id=?`).run(id);
@@ -375,4 +400,5 @@ module.exports = {
   markVideoWatched, markSurveyDone, markAccessGranted,
   revokeSession, getAllSessions, getStats, getSurveyAggregates,
   upsertVideoProgress, markVideoDropOff, getVideoDropOffStats, getVideoEngagementStats,
+  sweepStaleVideoProgress,
 };
