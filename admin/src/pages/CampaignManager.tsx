@@ -588,7 +588,6 @@ function CampaignForm({
                   Enable at least one.
                 </div>
               )}
-              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <FieldLabel>Starts At</FieldLabel>

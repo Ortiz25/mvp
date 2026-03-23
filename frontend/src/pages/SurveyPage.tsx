@@ -24,13 +24,19 @@ export function SurveyPage() {
     if (status?.active || status?.accessGranted) {
       navigate('/connecting', { replace: true }); return;
     }
-    // For survey-only campaigns (require_video=false), skip the video check
-    const requireVideo = config?.campaign?.requireVideo ?? status?.requireVideo ?? true;
+
+    // Wait for config before making any routing decisions that depend on
+    // requireVideo — if we default to true while config is still loading,
+    // survey-only campaigns get wrongly bounced to /watch.
+    if (!config) return;
+
+    const requireVideo = config.campaign?.requireVideo ?? status?.requireVideo ?? true;
     if (requireVideo && status && !status.videoWatched) {
       navigate('/watch', { replace: true }); return;
     }
+
     // Auto-grant if no survey questions (survey enabled but empty)
-    if (config && !config.survey?.questions?.length) {
+    if (!config.survey?.questions?.length) {
       doGrant();
     }
   }, [loading, status, config]);

@@ -42,6 +42,15 @@ export function VideoPage() {
     if (!loading && !config) refresh();
   }, [selectedSlug]);
 
+  // Guard: if this campaign doesn't require a video, don't show VideoPage at all.
+  // Can happen if user lands on /watch via back button or direct URL.
+  useEffect(() => {
+    if (!config) return;
+    if (config.campaign?.requireVideo === false) {
+      navigate('/survey', { replace: true });
+    }
+  }, [config]);
+
   useEffect(() => {
     if (loading) return;
     if (status?.active || status?.accessGranted) {

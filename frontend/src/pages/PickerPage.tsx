@@ -133,15 +133,18 @@ export function PickerPage() {
     selectCampaign(selected);
     await refresh();
     setStarting(false);
-    // Check statusRef synchronously — if already granted (returning user
-    // who somehow hit Start), go to /connecting. Otherwise go to /watch.
+
     if (statusRef.current?.accessGranted || statusRef.current?.active) {
       navigate('/connecting', { replace: true });
-    } else {
-      // Survey-only campaign (require_video=false) — skip video page
-      const requireVideo = statusRef.current?.requireVideo ?? true;
-      navigate(requireVideo ? '/watch' : '/survey', { replace: true });
+      return;
     }
+
+    // Use the campaign list data (already loaded) to decide routing —
+    // more reliable than statusRef which may not yet have requireVideo
+    // populated if the /status response hasn't synced to the ref yet.
+    const camp = campaigns.find(camp => camp.slug === selected);
+    const requireVideo = camp ? camp.require_video !== 0 : true;
+    navigate(requireVideo ? '/watch' : '/survey', { replace: true });
   };
 
 
