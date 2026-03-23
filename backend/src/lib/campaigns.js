@@ -78,14 +78,15 @@ function createCampaign(d) {
   const db = getDb();
   const id = uuidv4();
   db.prepare(
-    'INSERT INTO campaigns(id,slug,name,description,sponsor,logo_url,primary_color,accent_color,bg_color,session_hours,start_date,end_date,watch_frequency,require_survey) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+    'INSERT INTO campaigns(id,slug,name,description,sponsor,logo_url,primary_color,accent_color,bg_color,session_hours,start_date,end_date,watch_frequency,require_survey,require_video) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
   ).run(
     id, d.slug, d.name, d.description || null, d.sponsor || null,
     d.logo_url || null, d.primary_color || '#0050ff',
     d.accent_color || '#00c896', d.bg_color || '#050c1a',
     d.session_hours || 8, d.start_date || null, d.end_date || null,
     d.watch_frequency || 'once_per_day',
-    d.require_survey !== undefined ? (d.require_survey ? 1 : 0) : 1
+    d.require_survey !== undefined ? (d.require_survey ? 1 : 0) : 1,
+    d.require_video  !== undefined ? (d.require_video  ? 1 : 0) : 1
   );
   const r = db.prepare('SELECT * FROM campaigns WHERE id=?').get(id);
   db.close();
@@ -98,7 +99,7 @@ function updateCampaign(id, d) {
     'name', 'description', 'sponsor', 'logo_url',
     'primary_color', 'accent_color', 'bg_color',
     'session_hours', 'active', 'start_date', 'end_date',
-    'watch_frequency', 'require_survey',
+    'watch_frequency', 'require_survey', 'require_video',
   ];
   const fields = [], vals = [];
   for (const k of allowed) {

@@ -20,6 +20,8 @@ export interface CampaignSummary {
   video_filename:     string | null;
   video_duration:     number;
   video_required_pct: number;
+  require_video:      number;
+  require_survey:     number;
 }
 
 export interface PortalStatus {
@@ -29,6 +31,7 @@ export interface PortalStatus {
   sessionHours:  number;
   watchFrequency: 'always' | 'once_per_day' | 'once_ever';
   requireSurvey:  boolean;
+  requireVideo:   boolean;
   videoWatched:   boolean;
   surveyDone:     boolean;
   accessGranted: boolean;
@@ -46,7 +49,7 @@ export interface CampaignConfig {
   campaign: {
     id: string; slug: string; name: string; description: string;
     sponsor: string | null; primaryColor: string; accentColor: string;
-    sessionHours: number; requireSurvey: boolean;
+    sessionHours: number; requireSurvey: boolean; requireVideo: boolean;
   };
   video: {
     id: string; title: string; url: string;

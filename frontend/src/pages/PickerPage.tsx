@@ -51,15 +51,22 @@ function CampaignCard({ camp, selected, onClick }: {
             <IconClock className="w-3 h-3" />
             {camp.session_hours}h access
           </span>
-          {camp.video_filename ? (
+          {camp.require_video !== 0 && camp.video_filename && (
             <span className="chip chip-info gap-1">
               <IconPlay className="w-3 h-3" />
               Watch {watchPct}%
             </span>
-          ) : (
+          )}
+          {camp.require_video === 0 && (
             <span className="chip chip-muted gap-1">
-              <IconPlay className="w-3 h-3" />
-              No video
+              <IconCheck className="w-3 h-3" />
+              Survey only
+            </span>
+          )}
+          {camp.require_survey !== 0 && camp.require_video !== 0 && (
+            <span className="chip chip-muted gap-1">
+              <IconCheck className="w-3 h-3" />
+              + Survey
             </span>
           )}
         </div>
@@ -131,7 +138,9 @@ export function PickerPage() {
     if (statusRef.current?.accessGranted || statusRef.current?.active) {
       navigate('/connecting', { replace: true });
     } else {
-      navigate('/watch', { replace: true });
+      // Survey-only campaign (require_video=false) — skip video page
+      const requireVideo = statusRef.current?.requireVideo ?? true;
+      navigate(requireVideo ? '/watch' : '/survey', { replace: true });
     }
   };
 

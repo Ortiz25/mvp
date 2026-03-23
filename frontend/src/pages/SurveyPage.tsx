@@ -24,7 +24,9 @@ export function SurveyPage() {
     if (status?.active || status?.accessGranted) {
       navigate('/connecting', { replace: true }); return;
     }
-    if (status && !status.videoWatched) {
+    // For survey-only campaigns (require_video=false), skip the video check
+    const requireVideo = config?.campaign?.requireVideo ?? status?.requireVideo ?? true;
+    if (requireVideo && status && !status.videoWatched) {
       navigate('/watch', { replace: true }); return;
     }
     // Auto-grant if no survey questions (survey enabled but empty)

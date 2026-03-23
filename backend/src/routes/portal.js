@@ -147,6 +147,8 @@ router.get('/campaigns', (_req, res) => {
     video_filename:     c.video_filename     || null,
     video_duration:     c.video_duration     || 120,
     video_required_pct: c.video_required_pct || 0.8,
+    require_video:      c.require_video  ?? 1,
+    require_survey:     c.require_survey ?? 1,
   }));
   res.json({ campaigns });
 });
@@ -289,6 +291,7 @@ router.get('/:slug/status', async (req, res) => {
     sessionHours:   c.session_hours,
     watchFrequency: c.watch_frequency || 'once_per_day',
     requireSurvey:  c.require_survey !== 0,
+    requireVideo:   c.require_video  !== 0,
     videoWatched:   session.video_watched,
     surveyDone:     session.survey_done,
     accessGranted:  session.access_granted,
@@ -311,6 +314,7 @@ router.get('/:slug/config', (req, res) => {
       primaryColor: c.primary_color, accentColor: c.accent_color,
       sessionHours: c.session_hours,
       requireSurvey: c.require_survey !== 0,
+      requireVideo:  c.require_video  !== 0,
     },
     video: v ? {
       id: v.id, title: v.title,
@@ -398,9 +402,12 @@ router.post('/:slug/survey/submit', (req, res) => {
   const { sessionId, answers } = req.body;
   if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
   const session = getSession(sessionId);
-  if (!session)               return res.status(404).json({ error: 'Session not found' });
-  if (!session.video_watched) return res.status(403).json({ error: 'Must watch video first' });
-  if (!answers?.length)       return res.status(400).json({ error: 'Answers required' });
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  // Skip video_watched check for survey-only campaigns (require_video=0)
+  const sc = getCampaignBySlug(req.params.slug);
+  if ((sc?.require_video ?? 1) !== 0 && !session.video_watched)
+    return res.status(403).json({ error: 'Must watch video first' });
+  if (!answers?.length) return res.status(400).json({ error: 'Answers required' });
   markSurveyDone(sessionId, answers);
   res.json({ success: true });
 });
@@ -411,12 +418,15 @@ router.post('/:slug/access/grant', async (req, res) => {
   if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
 
   const session = getSession(sessionId);
-  if (!session)               return res.status(404).json({ error: 'Session not found' });
-  if (!session.video_watched) return res.status(403).json({ error: 'Must watch video first' });
+  if (!session) return res.status(404).json({ error: 'Session not found' });
 
-  // Fetch campaign FIRST — require_survey check depends on it
+  // Fetch campaign first — both require_video and require_survey checks depend on it
   const c = getCampaignBySlug(req.params.slug);
   if (!c) return res.status(404).json({ error: 'Campaign not found' });
+
+  // Skip video check for survey-only campaigns (require_video=0)
+  if ((c.require_video ?? 1) !== 0 && !session.video_watched)
+    return res.status(403).json({ error: 'Must watch video first' });
 
   if (c.require_survey && !session.survey_done)
     return res.status(403).json({ error: 'Must complete survey first' });

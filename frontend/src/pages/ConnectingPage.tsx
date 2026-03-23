@@ -9,7 +9,7 @@ const OFFLINE_APPS = [
 ];
 
 export function ConnectingPage() {
-  const { status, config, refresh, selectedSlug, resolving } = usePortal();
+  const { status, config, refresh, selectedSlug, resolving, loading } = usePortal();
   const navigate      = useNavigate();
   const loggedinFired = useRef(false);
   const refreshFired  = useRef(false);
@@ -52,20 +52,21 @@ export function ConnectingPage() {
   }, [selectedSlug, resolving]);
 
   // ── Redirect if not authenticated ──────────────────────────────────────
-  // Only redirect AFTER we've fetched status ourselves (refreshFired=true).
-  // Without this guard, navigating here from SurveyPage with pre-grant status
-  // in context (accessGranted=false) would immediately bounce to the picker
-  // before our own refresh() returns the committed grant.
+  // Wait for:
+  //   1. refreshFired — our own refresh() has been called
+  //   2. !loading    — the refresh() async call has completed and status is fresh
+  // Without the !loading gate, this effect fires with the stale pre-grant
+  // status (accessGranted=false) that was in context when we navigated here,
+  // before our own refresh() has had a chance to return the committed grant.
   useEffect(() => {
     if (resolving) return;
-    if (!refreshFired.current) return; // wait for our own fetch
+    if (!refreshFired.current) return;
+    if (loading) return;          // refresh still in flight — wait for it
     if (!status) return;
     if (!status.accessGranted && !status.active) {
-      // Don't silently bounce — show an error so the user knows what happened.
-      // The bounce will happen after a short delay giving them a chance to retry.
       setGrantError(true);
     }
-  }, [resolving, status]);
+  }, [resolving, loading, status]);
 
   // ── Fire CoovaChilli loggedin once ────────────────────────────────────
   useEffect(() => {
@@ -92,13 +93,8 @@ export function ConnectingPage() {
 
   const fmt2 = (n: number) => String(n).padStart(2, '0');
 
-  // Show loading spinner while:
-  // - whoAmI is in flight (resolving)
-  // - no slug yet (new user, neither path has resolved)
-  // - slug is set but status hasn't arrived yet (bootstrap refresh in flight,
-  //   which now always fires — including post-grant where SurveyPage no longer
-  //   calls refresh() before navigating here)
-  const stillLoading = resolving || !selectedSlug || (!status && selectedSlug !== null);
+  // Show spinner while whoAmI is resolving, no slug yet, or refresh is in flight
+  const stillLoading = resolving || loading || !selectedSlug || (!status && selectedSlug !== null);
 
   // Grant failed — chilli didn't open access. Show error + options.
   if (!stillLoading && grantError) {

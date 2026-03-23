@@ -398,6 +398,7 @@ function CampaignForm({
     session_hours:   initial?.session_hours   ?? 8,
     watch_frequency: initial?.watch_frequency ?? 'once_per_day',
     require_survey:  initial?.require_survey  ?? 1,
+    require_video:   initial?.require_video   ?? 1,
     start_date:      toInputDate(initial?.start_date),
     end_date:        toInputDate(initial?.end_date),
   });
@@ -406,6 +407,10 @@ function CampaignForm({
 
   const saveDetails = async () => {
     if (!form.name.trim()) { setErr('Campaign name is required'); return; }
+    if (!form.require_video && !form.require_survey) {
+      setErr('Enable at least one of Video or Survey — both off gives instant access with no engagement.');
+      return;
+    }
     setSaving(true); setErr(''); setStatus('Saving details…');
     try {
       let c: Campaign;
@@ -417,6 +422,7 @@ function CampaignForm({
           session_hours:   form.session_hours,
           watch_frequency: form.watch_frequency,
           require_survey:  form.require_survey,
+          require_video:   form.require_video,
           start_date: fromInputDate(form.start_date),
           end_date:   fromInputDate(form.end_date),
         });
@@ -430,6 +436,7 @@ function CampaignForm({
           session_hours:   form.session_hours,
           watch_frequency: form.watch_frequency,
           require_survey:  form.require_survey,
+          require_video:   form.require_video,
           start_date: fromInputDate(form.start_date),
           end_date:   fromInputDate(form.end_date),
         });
@@ -542,6 +549,23 @@ function CampaignForm({
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
+                  <FieldLabel>Require Video</FieldLabel>
+                  <select className="select" value={form.require_video}
+                    onChange={e => upd('require_video', parseInt(e.target.value))}>
+                    <option value={1}>Yes — video required</option>
+                    <option value={0}>No — skip video</option>
+                  </select>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+                  <p className="text-[10px] text-white/30 font-body leading-relaxed">
+                    {form.require_video
+                      ? 'Users must watch the video to get access.'
+                      : 'Video skipped — survey only (or instant access if survey also off).'}
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
                   <FieldLabel>Require Survey</FieldLabel>
                   <select className="select" value={form.require_survey}
                     onChange={e => upd('require_survey', parseInt(e.target.value))}>
@@ -556,6 +580,14 @@ function CampaignForm({
                       : 'Access granted right after video — no survey shown.'}
                   </p>
                 </div>
+              </div>
+              {!form.require_video && !form.require_survey && (
+                <div className="px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/20
+                  text-xs text-amber-400 font-body">
+                  ⚠ Both video and survey are off — users will get instant access with no engagement.
+                  Enable at least one.
+                </div>
+              )}
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -697,30 +729,45 @@ function CampaignCard({
         ))}
       </div>
 
-      {/* Watch frequency + video + survey indicator row */}
-      <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+      {/* Watch frequency + engagement mode row */}
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
         {/* Frequency badge */}
         <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/[0.04]
           border border-white/[0.07]" title={freq.desc}>
           <span className="text-[11px]">{freq.icon}</span>
           <span className="text-[10px] font-display font-bold text-white/50">{freq.label}</span>
         </div>
-        {/* Survey badge */}
+        {/* Engagement mode badge */}
         <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/[0.04]
           border border-white/[0.07]"
-          title={c.require_survey ? 'Survey required' : 'No survey'}>
-          <span className="text-[11px]">{c.require_survey ? '📝' : '⚡'}</span>
+          title={
+            !c.require_video && !c.require_survey ? 'No engagement required'
+            : !c.require_video ? 'Survey only'
+            : !c.require_survey ? 'Video only'
+            : 'Video + Survey'
+          }>
+          <span className="text-[11px]">
+            {!c.require_video && !c.require_survey ? '⚡'
+             : !c.require_video ? '📋'
+             : !c.require_survey ? '🎬'
+             : '🎬📋'}
+          </span>
           <span className="text-[10px] font-display font-bold text-white/50">
-            {c.require_survey ? 'Survey on' : 'No survey'}
+            {!c.require_video && !c.require_survey ? 'Instant access'
+             : !c.require_video ? 'Survey only'
+             : !c.require_survey ? 'Video only'
+             : 'Video + Survey'}
           </span>
         </div>
-        {/* Video indicator */}
-        <div className="flex items-center gap-1.5 text-[10px] font-body min-w-0">
-          <span>{c.video_filename ? '🎬' : '📭'}</span>
-          <span className={`truncate ${c.video_filename ? 'text-accent-400' : 'text-white/20'}`}>
-            {c.video_filename ? c.video_filename : 'No video'}
-          </span>
-        </div>
+        {/* Video filename pill */}
+        {c.require_video !== 0 && (
+          <div className="flex items-center gap-1.5 text-[10px] font-body min-w-0">
+            <span>{c.video_filename ? '✓' : '⚠'}</span>
+            <span className={`truncate ${c.video_filename ? 'text-accent-400/60' : 'text-amber-400/60'}`}>
+              {c.video_filename ? c.video_filename : 'No video uploaded'}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Actions */}

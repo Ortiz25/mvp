@@ -27,7 +27,8 @@ export interface Campaign {
   start_date:      string | null;
   end_date:        string | null;
   watch_frequency: 'always' | 'once_per_day' | 'once_ever';
-  require_survey:  number; // 1 = required, 0 = skip survey
+  require_survey:  number;
+  require_video:   number;
   created_at: string; updated_at: string;
   video_required_pct: number; video_duration: number;
   video_filename: string | null; video_original: string | null;

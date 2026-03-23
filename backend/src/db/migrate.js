@@ -33,6 +33,7 @@ function migrate() {
       end_date       TEXT,
       watch_frequency TEXT NOT NULL DEFAULT 'once_per_day',
       require_survey  INTEGER NOT NULL DEFAULT 1,
+      require_video   INTEGER NOT NULL DEFAULT 1,
       created_at     TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -129,6 +130,10 @@ function migrate() {
   if (!campCols.includes('require_survey')) {
     db.exec(`ALTER TABLE campaigns ADD COLUMN require_survey INTEGER NOT NULL DEFAULT 1`);
     console.log('  ↳ added require_survey column to campaigns');
+  }
+  if (!campCols.includes('require_video')) {
+    db.exec(`ALTER TABLE campaigns ADD COLUMN require_video INTEGER NOT NULL DEFAULT 1`);
+    console.log('  ↳ added require_video column to campaigns');
   }
 
   // video_progress table for drop-off analytics
