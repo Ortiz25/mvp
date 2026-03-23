@@ -13,7 +13,11 @@ export function ConnectingPage() {
   const navigate      = useNavigate();
   const loggedinFired = useRef(false);
   const refreshFired  = useRef(false);
-  const [grantError,  setGrantError]  = useState(false);
+
+  // True only when we've completed our own refresh AND status came back not-granted.
+  // Cleared immediately if status later shows accessGranted (handles race where
+  // stale status fires the check before the fresh granted status arrives).
+  const [grantError, setGrantError] = useState(false);
 
   const sessionHours = config?.campaign?.sessionHours ?? 1;
   const expiresAt = status?.expiresAt ?? (
@@ -25,45 +29,42 @@ export function ConnectingPage() {
   const [showApps, setShowApps] = useState(false);
   const [tl, setTl] = useState<ReturnType<typeof calcTimeLeft> | null>(null);
 
-  // Sync tl when expiresAt first becomes available after async status load
   useEffect(() => {
     if (expiresAt && !tl) setTl(calcTimeLeft(expiresAt, sessionHours));
   }, [expiresAt, sessionHours]);
 
-  // ── Bootstrap: always fetch a fresh status on mount ───────────────────
-  // We removed refresh() from SurveyPage.doGrant() to avoid a race where
-  // getOrCreateSession() creates a brand-new unauthenticated session (for
-  // watch_frequency='always' campaigns) right after the grant — causing
-  // ConnectingPage to immediately bounce back to the picker.
-  //
-  // ConnectingPage is now the authoritative place for the post-grant fetch.
-  // Always re-fetch (don't skip when status is already set) so we get the
-  // correct accessGranted=true + expiresAt from the committed grant.
-  // Also covers: user types /connecting directly — whoAmI resolves slug, then
-  // this effect fires to get the full status.
+  // ── Bootstrap: fetch fresh status once on mount ────────────────────────
   useEffect(() => {
     if (refreshFired.current) return;
-    if (resolving) return; // wait for whoAmI to finish first
-    if (!selectedSlug) return; // no slug yet — whoAmI still running or new user
+    if (resolving) return;
+    if (!selectedSlug) return;
 
     refreshFired.current = true;
-    console.log('[ConnectingPage] Fetching fresh status for slug:', selectedSlug);
     refresh();
   }, [selectedSlug, resolving]);
 
-  // ── Redirect if not authenticated ──────────────────────────────────────
-  // Wait for:
-  //   1. refreshFired — our own refresh() has been called
-  //   2. !loading    — the refresh() async call has completed and status is fresh
-  // Without the !loading gate, this effect fires with the stale pre-grant
-  // status (accessGranted=false) that was in context when we navigated here,
-  // before our own refresh() has had a chance to return the committed grant.
+  // ── Access check ───────────────────────────────────────────────────────
+  // Rules:
+  //   1. Never evaluate until our own refresh() has been called AND completed
+  //      (!loading). This prevents reading the stale pre-grant status that was
+  //      in context when we navigated here.
+  //   2. If status shows accessGranted — always clear grantError immediately.
+  //      This handles the race where grantError was set from a stale status,
+  //      then status updated to granted. The error screen must never show
+  //      when the session is actually live (see screenshot bug).
+  //   3. Only set grantError when refresh is fully done and status is
+  //      definitively not granted.
   useEffect(() => {
     if (resolving) return;
     if (!refreshFired.current) return;
-    if (loading) return;          // refresh still in flight — wait for it
+    if (loading) return;
     if (!status) return;
-    if (!status.accessGranted && !status.active) {
+
+    if (status.accessGranted || status.active) {
+      // Session is live — make sure error screen is not showing
+      setGrantError(false);
+    } else {
+      // Refresh completed, session genuinely not granted
       setGrantError(true);
     }
   }, [resolving, loading, status]);
@@ -93,11 +94,14 @@ export function ConnectingPage() {
 
   const fmt2 = (n: number) => String(n).padStart(2, '0');
 
-  // Show spinner while whoAmI is resolving, no slug yet, or refresh is in flight
+  // Show spinner while resolving, loading, no slug, or status not yet arrived
   const stillLoading = resolving || loading || !selectedSlug || (!status && selectedSlug !== null);
 
-  // Grant failed — chilli didn't open access. Show error + options.
-  if (!stillLoading && grantError) {
+  // Show error only when: not loading, not granted, and error flag set
+  // The extra !status?.accessGranted guard is a final safety net
+  const showError = !stillLoading && grantError && !status?.accessGranted && !status?.active;
+
+  if (showError) {
     return (
       <div className="flex flex-col px-5 py-10 gap-5 items-center animate-fade-up">
         <div className="w-16 h-16 rounded-full bg-red-500/10 border border-red-500/20
@@ -113,13 +117,17 @@ export function ConnectingPage() {
             Access Not Granted
           </h2>
           <p className="text-sm text-white/40 font-body max-w-xs">
-            Your video was accepted but the Wi-Fi gateway didn't open your connection.
-            This usually means the session expired — please try again.
+            The Wi-Fi gateway didn't open your connection.
+            This usually means the session timed out — please try again.
           </p>
         </div>
         <div className="flex flex-col gap-2 w-full">
           <button
-            onClick={() => { setGrantError(false); refreshFired.current = false; refresh(); }}
+            onClick={() => {
+              setGrantError(false);
+              refreshFired.current = false;
+              refresh();
+            }}
             className="btn-primary flex items-center justify-center gap-2">
             ↺ Retry
           </button>
@@ -179,13 +187,11 @@ export function ConnectingPage() {
             </span>
           </div>
 
-          {/* Big countdown */}
           <div className={`font-mono text-4xl font-bold tabular-nums text-center mb-3 transition-colors duration-700
             ${tl.expired ? 'text-white/20' : tl.urgent ? 'text-red-400' : 'text-white'}`}>
             {tl.h > 0 && `${tl.h}:`}{fmt2(tl.m)}:{fmt2(tl.s)}
           </div>
 
-          {/* Progress bar */}
           <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
             <div
               className={`h-full rounded-full transition-all duration-1000
@@ -201,7 +207,7 @@ export function ConnectingPage() {
         </div>
       )}
 
-      {/* No expiry info — chilli fallback session (no DB record) */}
+      {/* No expiry info — chilli fallback session */}
       {!stillLoading && !expiresAt && status?.accessGranted && (
         <div className="rounded-xl border border-signal/20 bg-signal/[0.06] px-5 py-4 text-center">
           <p className="text-[11px] text-white/40 font-body">
