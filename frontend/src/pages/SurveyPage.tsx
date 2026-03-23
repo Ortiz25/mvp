@@ -27,11 +27,7 @@ export function SurveyPage() {
     if (status && !status.videoWatched) {
       navigate('/watch', { replace: true }); return;
     }
-    // Skip survey entirely if campaign doesn't require it
-    const requireSurvey = config?.campaign?.requireSurvey ?? status?.requireSurvey ?? true;
-    if (!requireSurvey) {
-      doGrant(); return;
-    }
+    // Auto-grant if no survey questions (survey enabled but empty)
     if (config && !config.survey?.questions?.length) {
       doGrant();
     }

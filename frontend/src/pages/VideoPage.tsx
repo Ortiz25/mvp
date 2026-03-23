@@ -4,8 +4,22 @@ import { usePortal } from '../context/SessionContext';
 import { portalApi } from '../lib/api';
 import { IconArrow, IconPlay } from '../components/layout/Shell';
 
+const SS_KEY = 'cp_hotspot_v3';
+
+/** Clear the one-time CoovaChilli challenge from sessionStorage after use. */
+function clearChallenge() {
+  try {
+    const stored = sessionStorage.getItem(SS_KEY);
+    if (stored) {
+      const p = JSON.parse(stored);
+      p.challenge = null;
+      sessionStorage.setItem(SS_KEY, JSON.stringify(p));
+    }
+  } catch {}
+}
+
 export function VideoPage() {
-  const { selectedSlug, status, config, loading, refresh } = usePortal();
+  const { selectedSlug, status, config, loading, refresh, hotspot } = usePortal();
   const navigate = useNavigate();
 
   const videoRef      = useRef<HTMLVideoElement>(null);
@@ -14,9 +28,9 @@ export function VideoPage() {
   const [submitting,  setSubmitting]  = useState(false);
   const [error,       setError]       = useState('');
 
-  // Track whether the video was completed in THIS page visit.
-  // This prevents routing logic from treating a previous-cycle
-  // videoWatched=true (from DB) as "skip the video again".
+  // Tracks whether the video was completed in THIS browser visit.
+  // Prevents stale DB videoWatched=true (from a previous grant cycle in
+  // 'always' mode) from skipping the video on the next session.
   const completedThisVisit = useRef(false);
 
   useEffect(() => {
@@ -27,24 +41,23 @@ export function VideoPage() {
   useEffect(() => {
     if (loading) return;
 
-    // Already active — go to connecting
+    // Already active — go straight to connecting
     if (status?.active || status?.accessGranted) {
       navigate('/connecting', { replace: true }); return;
     }
 
     const freq = status?.watchFrequency ?? 'once_per_day';
 
-    // ── BUG FIX: 'always' mode ──────────────────────────────────────────
-    // In 'always' mode the DB may still show videoWatched=true from the
-    // previous grant cycle (needsNewSession resets only after access_granted=1
-    // AND the session has expired). Do NOT skip the video based on DB state
-    // alone — only navigate away once the user actually watches it THIS visit.
+    // ── 'always' mode fix ────────────────────────────────────────────────
+    // In 'always' mode the DB may still carry videoWatched=true from the
+    // *previous* grant cycle (needsNewSession only resets after the expired
+    // session is seen on the next /status call). Never skip the video based
+    // on the DB flag alone — only act once the user has watched it THIS visit.
     if (status?.videoWatched && !completedThisVisit.current) {
       if (freq === 'always') {
-        // Stay on video page — let them watch again. The DB flag is stale.
-        return;
+        return; // Stay — let them watch again
       }
-      // once_per_day / once_ever: genuinely already watched
+      // once_per_day / once_ever: genuinely already consumed this window
       const msg = freq === 'once_ever'
         ? "You have already watched this campaign's content. Pick another campaign to get access."
         : "You have already watched today's content for this campaign. Come back tomorrow or pick another campaign.";
@@ -53,16 +66,16 @@ export function VideoPage() {
   }, [loading, status]);
 
   // ── Drop-off beacon ───────────────────────────────────────────────────
-  // Fires when user navigates away or hides the tab before completing video.
+  // Fires when the user navigates away or hides the tab without finishing.
   useEffect(() => {
     if (!selectedSlug || !status?.sessionId) return;
 
     const sendDropOff = () => {
-      if (completedThisVisit.current) return; // already finished, not a drop-off
+      if (completedThisVisit.current) return;
       const pct = videoRef.current
         ? videoRef.current.currentTime / (videoRef.current.duration || 1)
         : 0;
-      if (pct < 0.01) return; // never really started — don't record
+      if (pct < 0.01) return;
       try {
         navigator.sendBeacon(
           `/api/${selectedSlug}/video/dropoff`,
@@ -80,15 +93,15 @@ export function VideoPage() {
     };
   }, [selectedSlug, status?.sessionId]);
 
-  // ── Progress heartbeat (every 5s) ────────────────────────────────────
+  // ── Progress heartbeat (every 5 s) ───────────────────────────────────
   useEffect(() => {
     if (!selectedSlug || !status?.sessionId) return;
-    const interval = setInterval(() => {
+    const id = setInterval(() => {
       if (watchedPct > 0.01 && !completedThisVisit.current) {
         portalApi.videoProgress(selectedSlug, status.sessionId, watchedPct).catch(() => {});
       }
     }, 5000);
-    return () => clearInterval(interval);
+    return () => clearInterval(id);
   }, [selectedSlug, status?.sessionId, watchedPct]);
 
   const requiredPct = config?.video?.requiredWatchPct ?? 0.8;
@@ -105,26 +118,38 @@ export function VideoPage() {
     if (!canContinue || !status || !selectedSlug || submitting) return;
     setSubmitting(true);
     setError('');
+
     try {
+      // 1. Tell backend video is done
       await portalApi.videoComplete(selectedSlug, status.sessionId, watchedPct);
       completedThisVisit.current = true;
-      await refresh();
 
-      // Decide next step based on campaign config
-      const requireSurvey = config?.campaign?.requireSurvey ?? status?.requireSurvey ?? true;
-      const hasSurveyQuestions = (config?.survey?.questions?.length ?? 0) > 0;
+      // 2. Decide: does this campaign need a survey?
+      const requireSurvey =
+        config?.campaign?.requireSurvey ??
+        status?.requireSurvey ??
+        true;
 
-      if (requireSurvey && hasSurveyQuestions) {
+      if (requireSurvey) {
+        // Survey required — let SurveyPage handle the grant
+        await refresh();
         navigate('/survey', { replace: true });
-      } else {
-        // No survey required — go straight to connecting (SurveyPage doGrant logic)
-        navigate('/survey', { replace: true });
+        return;
       }
+
+      // ── No survey — grant access right here ─────────────────────────
+      await portalApi.grantAccess(selectedSlug, status.sessionId, hotspot.challenge);
+      clearChallenge();
+      // Do NOT call refresh() — same reason as in SurveyPage:
+      // refresh() → /status → getOrCreateSession() creates a fresh session
+      // for 'always' campaigns, making ConnectingPage see accessGranted=false.
+      navigate('/connecting', { replace: true });
+
     } catch (e) {
       setSubmitting(false);
       setError(e instanceof Error ? e.message : 'Failed — try again');
     }
-  }, [canContinue, status, selectedSlug, submitting, watchedPct, config]);
+  }, [canContinue, status, selectedSlug, submitting, watchedPct, config, hotspot]);
 
   if (loading && !config) {
     return (
@@ -195,11 +220,15 @@ export function VideoPage() {
         {submitting ? (
           <>
             <span className="w-4 h-4 rounded-full border-2 border-void/40 border-t-void animate-spin" />
-            <span>Loading…</span>
+            <span>{config?.campaign?.requireSurvey === false ? 'Getting access…' : 'Loading…'}</span>
           </>
         ) : (
           <>
-            <span>{canContinue ? 'Continue' : `Watch ${Math.round(requiredPct * 100)}% to continue`}</span>
+            <span>
+              {canContinue
+                ? (config?.campaign?.requireSurvey === false ? 'Get Internet Access' : 'Continue to Survey')
+                : `Watch ${Math.round(requiredPct * 100)}% to continue`}
+            </span>
             {canContinue && <IconArrow className="w-4 h-4" />}
           </>
         )}
