@@ -13,6 +13,7 @@ export function ConnectingPage() {
   const navigate      = useNavigate();
   const loggedinFired = useRef(false);
   const refreshFired  = useRef(false);
+  const [grantError,  setGrantError]  = useState(false);
 
   const sessionHours = config?.campaign?.sessionHours ?? 1;
   const expiresAt = status?.expiresAt ?? (
@@ -59,7 +60,11 @@ export function ConnectingPage() {
     if (resolving) return;
     if (!refreshFired.current) return; // wait for our own fetch
     if (!status) return;
-    if (!status.accessGranted && !status.active) navigate('/', { replace: true });
+    if (!status.accessGranted && !status.active) {
+      // Don't silently bounce — show an error so the user knows what happened.
+      // The bounce will happen after a short delay giving them a chance to retry.
+      setGrantError(true);
+    }
   }, [resolving, status]);
 
   // ── Fire CoovaChilli loggedin once ────────────────────────────────────
@@ -94,6 +99,43 @@ export function ConnectingPage() {
   //   which now always fires — including post-grant where SurveyPage no longer
   //   calls refresh() before navigating here)
   const stillLoading = resolving || !selectedSlug || (!status && selectedSlug !== null);
+
+  // Grant failed — chilli didn't open access. Show error + options.
+  if (!stillLoading && grantError) {
+    return (
+      <div className="flex flex-col px-5 py-10 gap-5 items-center animate-fade-up">
+        <div className="w-16 h-16 rounded-full bg-red-500/10 border border-red-500/20
+          flex items-center justify-center">
+          <svg className="w-7 h-7 text-red-400" fill="none" viewBox="0 0 24 24"
+            stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round"
+              d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
+          </svg>
+        </div>
+        <div className="text-center">
+          <h2 className="font-display font-extrabold text-white text-lg mb-1">
+            Access Not Granted
+          </h2>
+          <p className="text-sm text-white/40 font-body max-w-xs">
+            Your video was accepted but the Wi-Fi gateway didn't open your connection.
+            This usually means the session expired — please try again.
+          </p>
+        </div>
+        <div className="flex flex-col gap-2 w-full">
+          <button
+            onClick={() => { setGrantError(false); refreshFired.current = false; refresh(); }}
+            className="btn-primary flex items-center justify-center gap-2">
+            ↺ Retry
+          </button>
+          <button
+            onClick={() => navigate('/', { replace: true })}
+            className="btn btn-surface w-full justify-center py-2.5">
+            ← Back to Campaigns
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col px-5 py-6 gap-5 animate-fade-up">

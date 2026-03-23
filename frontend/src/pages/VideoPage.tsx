@@ -138,7 +138,23 @@ export function VideoPage() {
       }
 
       // ── No survey — grant access right here ─────────────────────────
-      await portalApi.grantAccess(selectedSlug, status.sessionId, hotspot.challenge);
+      // If we have no challenge (loginurl didn't include one), fetch a fresh
+      // one from chilli's UAM /newchal before attempting the grant.
+      let challenge = hotspot.challenge;
+      if (!challenge) {
+        try {
+          const r = await fetch(`/api/${selectedSlug}/challenge${status.mac ? `?mac=${status.mac}` : ''}`);
+          if (r.ok) {
+            const d = await r.json();
+            challenge = d.challenge ?? null;
+            console.log('[VideoPage] Fetched fresh challenge:', challenge ? challenge.slice(0, 8) + '…' : 'null');
+          }
+        } catch {
+          // non-fatal — grant will fall back to chilli_query authorize only
+        }
+      }
+
+      await portalApi.grantAccess(selectedSlug, status.sessionId, challenge);
       clearChallenge();
       // Do NOT call refresh() — same reason as in SurveyPage:
       // refresh() → /status → getOrCreateSession() creates a fresh session

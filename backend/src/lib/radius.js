@@ -38,6 +38,44 @@ function pool() {
   return _pool;
 }
 
+// ── Fetch a fresh UAM challenge from CoovaChilli ─────────────────────────
+// CoovaChilli's UAM server exposes GET /newchal?mac=XX:XX:XX:XX:XX:XX
+// which returns the challenge string needed for MD5-based UAM logon.
+// Used as fallback when the portal was loaded without a challenge in the URL.
+async function fetchChallenge(mac) {
+  return new Promise((resolve) => {
+    const path = `/newchal?mac=${encodeURIComponent(mac)}`;
+    const req = http.request(
+      { host: UAM_HOST, port: UAM_PORT, path, method: 'GET' },
+      (res) => {
+        let body = '';
+        res.on('data', d => { body += d; });
+        res.on('end', () => {
+          // Response format: "challenge=<hex>\n" or just "<hex>"
+          const match = body.match(/challenge=([0-9a-f]+)/i) || body.match(/([0-9a-f]{32,})/i);
+          if (match) {
+            console.log(`[UAM] Fresh challenge for ${mac}: ${match[1].slice(0, 8)}…`);
+            resolve(match[1]);
+          } else {
+            console.warn(`[UAM] /newchal unexpected response for ${mac}: ${body.trim()}`);
+            resolve(null);
+          }
+        });
+      }
+    );
+    req.on('error', (err) => {
+      console.warn(`[UAM] /newchal request failed for ${mac}: ${err.message}`);
+      resolve(null);
+    });
+    req.setTimeout(3000, () => {
+      console.warn(`[UAM] /newchal timeout for ${mac}`);
+      req.destroy();
+      resolve(null);
+    });
+    req.end();
+  });
+}
+
 // ── UAM logon — this is what actually opens internet on CoovaChilli ───────
 // CoovaChilli UAM response formula:
 //   password = MD5(uamsecret + username)       — hex string
@@ -185,6 +223,12 @@ async function grantAccess(mac, hours = 1, clientIp = null, challenge = null) {
     }
   }
 
+  // If no challenge provided, try to fetch one fresh from chilli's UAM server
+  if (!challenge) {
+    console.log(`[GRANT] No challenge stored — fetching fresh from UAM for ${normMac}`);
+    challenge = await fetchChallenge(normMac);
+  }
+
   // Step 1: UAM logon
   const uamOk = await chilliUamLogon(normMac, challenge);
 
@@ -238,5 +282,5 @@ function buildLogoutUrl(_mac) {
 
 module.exports = {
   grantAccess, revokeAccess, testConnection,
-  listAuthorizedClients, buildLogoutUrl, normalizeMac,
+  listAuthorizedClients, buildLogoutUrl, normalizeMac, fetchChallenge,
 };

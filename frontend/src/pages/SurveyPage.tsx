@@ -38,9 +38,22 @@ export function SurveyPage() {
     setSubmitting(true);
     setError('');
     try {
-      // Pass the CoovaChilli challenge so the backend can call
-      // chilli's UAM /logon endpoint and actually open internet access.
-      await portalApi.grantAccess(selectedSlug, status.sessionId, hotspot.challenge);
+      // If challenge is missing (loginurl didn't include it), fetch a fresh one
+      // from chilli's UAM /newchal so the UAM logon can actually open internet.
+      let challenge = hotspot.challenge;
+      if (!challenge) {
+        try {
+          const r = await fetch(`/api/${selectedSlug}/challenge${status.mac ? `?mac=${status.mac}` : ''}`);
+          if (r.ok) {
+            const d = await r.json();
+            challenge = d.challenge ?? null;
+          }
+        } catch {
+          // non-fatal — grant falls back to chilli_query authorize
+        }
+      }
+
+      await portalApi.grantAccess(selectedSlug, status.sessionId, challenge);
 
       // Clear challenge from sessionStorage — it's one-time use.
       // Do this BEFORE navigating so returning visits don't find a stale challenge.

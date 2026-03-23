@@ -26,7 +26,7 @@ const {
 
 const { getDb } = require('../db/migrate');
 
-const { grantAccess } = require('../lib/radius');
+const { grantAccess, fetchChallenge } = require('../lib/radius');
 
 const CHILLI_IPC = process.env.CHILLI_QUERY_CMD || 'sudo chilli_query -s /var/run/chilli.ipc';
 // Convert SQLite local datetime string "2026-03-20 12:00:00" to ISO format
@@ -327,6 +327,23 @@ router.get('/:slug/config', (req, res) => {
       })),
     } : null,
   });
+});
+
+// ── GET /api/:slug/challenge ──────────────────────────────────────────────
+// Fetches a fresh UAM challenge from CoovaChilli for the requesting client.
+// Used when the portal was loaded without a challenge in the loginurl
+// (e.g. after SPA navigation loses URL params, or chilli config omits it).
+router.get('/:slug/challenge', async (req, res) => {
+  const ip  = req.query.ip || getClientIp(req);
+  let mac   = req.query.mac || null;
+  if (!mac && ip) mac = await getMacForIp(ip);
+  if (!mac) return res.status(400).json({ error: 'Cannot determine MAC address' });
+
+  const challenge = await fetchChallenge(mac);
+  if (!challenge) return res.status(503).json({ error: 'Could not fetch challenge from chilli UAM' });
+
+  console.log(`[CHALLENGE] Fresh challenge for mac=${mac}: ${challenge.slice(0, 8)}…`);
+  res.json({ challenge, mac });
 });
 
 // ── POST /api/:slug/video/progress ────────────────────────────────────────
