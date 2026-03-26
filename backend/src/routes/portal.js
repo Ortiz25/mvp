@@ -21,7 +21,7 @@ const {
   getOrCreateSession, getSession,
   markVideoWatched, markSurveyDone, markAccessGranted,
   isSessionActive, getAllSessions,
-  upsertVideoProgress, markVideoDropOff, getVideoDropOffStats,
+  upsertVideoProgress, markVideoStarted, markVideoDropOff, getVideoDropOffStats,
 } = require('../lib/sessions');
 
 const { getDb } = require('../db/migrate');
@@ -349,6 +349,19 @@ router.get('/:slug/challenge', async (req, res) => {
 
   console.log(`[CHALLENGE] Fresh challenge for mac=${mac}: ${challenge.slice(0, 8)}…`);
   res.json({ challenge, mac });
+});
+
+// ── POST /api/:slug/video/start ──────────────────────────────────────────
+// Fix 3: called once when the user actually presses play (first timeupdate > 1s).
+// Creates the video_progress row with started=1, recording that they engaged
+// with the video — not just loaded the page. Enables bounce rate tracking.
+router.post('/:slug/video/start', (req, res) => {
+  const { sessionId } = req.body;
+  if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
+  const session = getSession(sessionId);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  markVideoStarted(sessionId, session.campaign_id);
+  res.json({ success: true });
 });
 
 // ── POST /api/:slug/video/progress ────────────────────────────────────────

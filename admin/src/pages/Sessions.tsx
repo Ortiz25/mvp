@@ -152,7 +152,8 @@ export function Sessions() {
 
 type EngagementStats = {
   summary: {
-    total_views: number; completed: number; dropped_off: number;
+    total_views: number; started: number; bounce_count: number;
+    bounce_rate: number | null; completed: number; dropped_off: number;
     still_watching: number; avg_watch_pct: number | null;
     avg_completion_pct: number | null; avg_drop_pct: number | null;
     completion_rate: number | null; drop_rate: number | null;
@@ -282,14 +283,16 @@ function VideoEngagementSection({
   const s = stats?.summary;
 
   const statPills = s ? [
-    { label: 'Total Views',    value: s.total_views,                        color: 'text-white' },
-    { label: 'Completed',      value: s.completed,                          color: 'text-accent-400' },
-    { label: 'Dropped',        value: s.dropped_off,                        color: 'text-red-400' },
-    { label: 'Completion Rate',value: s.completion_rate != null ? `${s.completion_rate}%` : '—', color: 'text-accent-400' },
-    { label: 'Drop Rate',      value: s.drop_rate       != null ? `${s.drop_rate}%`       : '—', color: 'text-red-400' },
-    { label: 'Avg Watch',      value: s.avg_watch_pct   != null ? `${s.avg_watch_pct}%`   : '—', color: 'text-white/70' },
-    { label: 'Avg Completers', value: s.avg_completion_pct != null ? `${s.avg_completion_pct}%` : '—', color: 'text-accent-300' },
-    { label: 'Avg Drop-off At',value: s.avg_drop_pct    != null ? `${s.avg_drop_pct}%`    : '—', color: 'text-amber-400' },
+    { label: 'Page Loads',     value: s.total_views,                                              color: 'text-white/60',    title: 'Users who reached the video page' },
+    { label: 'Started',        value: s.started,                                                  color: 'text-white',       title: 'Users who pressed play (watched ≥1s)' },
+    { label: 'Bounced',        value: s.bounce_count,                                             color: 'text-white/40',    title: 'Loaded page but never pressed play' },
+    { label: 'Bounce Rate',    value: s.bounce_rate    != null ? `${s.bounce_rate}%`    : '—',   color: 'text-white/50',    title: 'Page loads that never started watching' },
+    { label: 'Completed',      value: s.completed,                                                color: 'text-accent-400',  title: 'Reached the required watch threshold' },
+    { label: 'Dropped',        value: s.dropped_off,                                             color: 'text-red-400',     title: 'Started but left before threshold' },
+    { label: 'Completion Rate',value: s.completion_rate != null ? `${s.completion_rate}%` : '—', color: 'text-accent-400',  title: 'Of those who started, % who completed' },
+    { label: 'Drop Rate',      value: s.drop_rate       != null ? `${s.drop_rate}%`       : '—', color: 'text-red-400',     title: 'Of those who started, % who dropped off' },
+    { label: 'Avg Watch',      value: s.avg_watch_pct   != null ? `${s.avg_watch_pct}%`   : '—', color: 'text-white/70',    title: 'Average furthest position reached' },
+    { label: 'Avg Drop-off At',value: s.avg_drop_pct    != null ? `${s.avg_drop_pct}%`    : '—', color: 'text-amber-400',   title: 'Average position where people quit' },
   ] : [];
 
   return (
@@ -322,11 +325,12 @@ function VideoEngagementSection({
           <div className="space-y-5">
 
             {/* ── Stats grid ── */}
-            <div className="grid grid-cols-4 gap-3">
-              {statPills.map(({ label, value, color }) => (
-                <div key={label} className="bg-white/[0.03] rounded-xl p-3 border border-white/[0.06] text-center">
-                  <p className={`font-display font-bold text-xl ${color}`}>{value}</p>
-                  <p className="text-[9px] text-white/25 font-body uppercase tracking-wider mt-1">{label}</p>
+            <div className="grid grid-cols-5 gap-2">
+              {statPills.map(({ label, value, color, title }) => (
+                <div key={label} title={title}
+                  className="bg-white/[0.03] rounded-xl p-2.5 border border-white/[0.06] text-center cursor-default">
+                  <p className={`font-display font-bold text-lg ${color}`}>{value}</p>
+                  <p className="text-[8px] text-white/25 font-body uppercase tracking-wider mt-1 leading-tight">{label}</p>
                 </div>
               ))}
             </div>

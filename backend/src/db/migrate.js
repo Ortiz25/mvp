@@ -136,6 +136,15 @@ function migrate() {
     console.log('  ↳ added require_video column to campaigns');
   }
 
+  // video_progress: add started column if missing
+  try {
+    const vpCols = db.prepare('PRAGMA table_info(video_progress)').all().map(r => r.name);
+    if (!vpCols.includes('started')) {
+      db.exec('ALTER TABLE video_progress ADD COLUMN started INTEGER NOT NULL DEFAULT 0');
+      console.log('  ↳ added started column to video_progress');
+    }
+  } catch {}
+
   // video_progress table for drop-off analytics
   db.exec(`
     CREATE TABLE IF NOT EXISTS video_progress (
@@ -144,6 +153,7 @@ function migrate() {
       campaign_id  TEXT NOT NULL,
       watched_pct  REAL NOT NULL DEFAULT 0,
       last_pct     REAL NOT NULL DEFAULT 0,
+      started      INTEGER NOT NULL DEFAULT 0,
       completed    INTEGER NOT NULL DEFAULT 0,
       dropped_off  INTEGER NOT NULL DEFAULT 0,
       drop_pct     REAL,

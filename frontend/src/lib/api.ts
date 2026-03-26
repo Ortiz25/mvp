@@ -111,6 +111,12 @@ export const portalApi = {
   config: (slug: string) =>
     req<CampaignConfig>(`/api/${slug}/config`),
 
+  videoStart: (slug: string, sessionId: string) =>
+    req<{ success: boolean }>(`/api/${slug}/video/start`, {
+      method: 'POST',
+      body: JSON.stringify({ sessionId }),
+    }),
+
   videoProgress: (slug: string, sessionId: string, watchedPct: number) =>
     req<{ success: boolean }>(`/api/${slug}/video/progress`, {
       method: 'POST',

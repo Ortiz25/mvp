@@ -2,6 +2,18 @@
 const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../db/migrate');
 
+// ── Shared DB connection for high-frequency heartbeat writes ──────────────
+// Opening/closing a new SQLite connection on every 5-second heartbeat from
+// every active viewer is wasteful. We keep one persistent connection for
+// video_progress writes and reopen it only if it gets closed unexpectedly.
+let _sharedDb = null;
+function getSharedDb() {
+  if (!_sharedDb || !_sharedDb.open) {
+    _sharedDb = getDb();
+  }
+  return _sharedDb;
+}
+
 function row2s(r) {
   return {
     id:            r.id,
@@ -204,28 +216,47 @@ function markAccessGranted(id, hours) {
 
 // ── Video progress / drop-off tracking ────────────────────────────────────
 
-function upsertVideoProgress(sessionId, campaignId, watchedPct, completed = false) {
-  const db = getDb();
+function upsertVideoProgress(sessionId, campaignId, watchedPct, completed = false, started = false) {
+  // Fix 4: use shared persistent connection — avoids open/close on every 5s heartbeat
+  const db = getSharedDb();
   const existing = db.prepare('SELECT * FROM video_progress WHERE session_id=?').get(sessionId);
   if (!existing) {
     db.prepare(
-      `INSERT INTO video_progress(id,session_id,campaign_id,watched_pct,last_pct,completed,updated_at)
-       VALUES(?,?,?,?,?,?,datetime('now'))`
-    ).run(uuidv4(), sessionId, campaignId, watchedPct, watchedPct, completed ? 1 : 0);
+      `INSERT INTO video_progress(id,session_id,campaign_id,watched_pct,last_pct,started,completed,updated_at)
+       VALUES(?,?,?,?,?,?,?,datetime('now'))`
+    ).run(uuidv4(), sessionId, campaignId, watchedPct, watchedPct, started ? 1 : 0, completed ? 1 : 0);
   } else {
     // Only update watched_pct if moving forward (never rewind progress)
     const newPct = Math.max(existing.watched_pct, watchedPct);
     db.prepare(`
       UPDATE video_progress
-      SET watched_pct=?, last_pct=?, completed=?, updated_at=datetime('now')
+      SET watched_pct=?, last_pct=?, started=?, completed=?, updated_at=datetime('now')
       WHERE session_id=?
-    `).run(newPct, watchedPct, completed ? 1 : existing.completed, sessionId);
+    `).run(newPct, watchedPct, started ? 1 : existing.started, completed ? 1 : existing.completed, sessionId);
   }
-  db.close();
+  // Note: do NOT close _sharedDb here — it is reused across calls
+}
+
+// Fix 3: record that the user actually pressed play (first real watch event)
+// Called separately from upsertVideoProgress so heartbeats don't re-set it
+function markVideoStarted(sessionId, campaignId) {
+  const db = getSharedDb();
+  const existing = db.prepare('SELECT id FROM video_progress WHERE session_id=?').get(sessionId);
+  if (!existing) {
+    db.prepare(
+      `INSERT INTO video_progress(id,session_id,campaign_id,watched_pct,last_pct,started,completed,updated_at)
+       VALUES(?,?,?,0,0,1,0,datetime('now'))`
+    ).run(uuidv4(), sessionId, campaignId);
+  } else {
+    db.prepare(`UPDATE video_progress SET started=1, updated_at=datetime('now') WHERE session_id=?`).run(sessionId);
+  }
 }
 
 function markVideoDropOff(sessionId) {
-  const db = getDb();
+  // Fix 2: use shared DB; also only mark drop-off if this session's row
+  // is not already completed (guards against stale sessionId from a previous
+  // cycle being passed in after a new session was created for 'always' campaigns)
+  const db = getSharedDb();
   const row = db.prepare('SELECT * FROM video_progress WHERE session_id=?').get(sessionId);
   if (row && !row.completed && !row.dropped_off) {
     db.prepare(`
@@ -234,7 +265,7 @@ function markVideoDropOff(sessionId) {
       WHERE session_id=?
     `).run(sessionId);
   }
-  db.close();
+  // Note: do NOT close _sharedDb
 }
 
 function getVideoEngagementStats(campaignId = null) {
@@ -247,14 +278,17 @@ function getVideoEngagementStats(campaignId = null) {
   const summary = db.prepare(`
     SELECT
       COUNT(*)                                                                AS total_views,
+      SUM(vp.started)                                                         AS started,
+      COUNT(*) - SUM(vp.started)                                              AS bounce_count,
       SUM(vp.completed)                                                       AS completed,
       SUM(vp.dropped_off)                                                     AS dropped_off,
-      COUNT(*) - SUM(vp.completed) - SUM(vp.dropped_off)                     AS still_watching,
+      SUM(CASE WHEN vp.started=1 AND vp.completed=0 AND vp.dropped_off=0 THEN 1 ELSE 0 END) AS still_watching,
+      ROUND(CAST(COUNT(*) - SUM(vp.started) AS REAL) / NULLIF(COUNT(*), 0) * 100, 1)        AS bounce_rate,
       ROUND(AVG(vp.watched_pct) * 100, 1)                                    AS avg_watch_pct,
       ROUND(AVG(CASE WHEN vp.completed   = 1 THEN vp.watched_pct END) * 100, 1) AS avg_completion_pct,
       ROUND(AVG(CASE WHEN vp.dropped_off = 1 THEN vp.drop_pct   END) * 100, 1) AS avg_drop_pct,
-      ROUND(CAST(SUM(vp.completed)   AS REAL) / NULLIF(COUNT(*), 0) * 100, 1)  AS completion_rate,
-      ROUND(CAST(SUM(vp.dropped_off) AS REAL) / NULLIF(COUNT(*), 0) * 100, 1)  AS drop_rate
+      ROUND(CAST(SUM(vp.completed)   AS REAL) / NULLIF(SUM(vp.started), 0) * 100, 1)  AS completion_rate,
+      ROUND(CAST(SUM(vp.dropped_off) AS REAL) / NULLIF(SUM(vp.started), 0) * 100, 1)  AS drop_rate
     FROM video_progress vp ${where}
   `).get(...params);
 
@@ -399,6 +433,6 @@ module.exports = {
   getOrCreateSession, getSession, isSessionActive,
   markVideoWatched, markSurveyDone, markAccessGranted,
   revokeSession, getAllSessions, getStats, getSurveyAggregates,
-  upsertVideoProgress, markVideoDropOff, getVideoDropOffStats, getVideoEngagementStats,
+  upsertVideoProgress, markVideoStarted, markVideoDropOff, getVideoDropOffStats, getVideoEngagementStats,
   sweepStaleVideoProgress,
 };
