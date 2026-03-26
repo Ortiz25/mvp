@@ -701,15 +701,40 @@ function CampaignCard({
           {c.description && (
             <p className="text-xs text-white/35 font-body mt-1 line-clamp-2">{c.description}</p>
           )}
-          {/* Active date range */}
-          {(c.start_date || c.end_date) && (
-            <p className="text-[10px] text-white/25 font-body mt-1">
-              📅{' '}
-              {c.start_date ? toInputDate(c.start_date).replace('T', ' ') : '∞'}
-              {' → '}
-              {c.end_date ? toInputDate(c.end_date).replace('T', ' ') : '∞'}
-            </p>
-          )}
+          {/* Campaign date range — always visible */}
+          {(() => {
+            const now = new Date();
+            const start = c.start_date ? new Date(c.start_date.replace(' ', 'T')) : null;
+            const end   = c.end_date   ? new Date(c.end_date.replace(' ', 'T'))   : null;
+            const notStarted = start && start > now;
+            const expired    = end   && end   < now;
+            return (
+              <div className="flex flex-col gap-0.5 mt-1.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[9px] font-display font-bold uppercase tracking-wider text-white/20 w-10">Starts</span>
+                  {start ? (
+                    <span className={`text-[10px] font-mono ${notStarted ? 'text-amber-400/70' : 'text-white/40'}`}>
+                      {toInputDate(c.start_date).replace('T', ' ')}
+                      {notStarted && <span className="ml-1 text-[9px] text-amber-400/60">(upcoming)</span>}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-white/20 font-body italic">immediately</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[9px] font-display font-bold uppercase tracking-wider text-white/20 w-10">Ends</span>
+                  {end ? (
+                    <span className={`text-[10px] font-mono ${expired ? 'text-red-400/70' : 'text-white/40'}`}>
+                      {toInputDate(c.end_date).replace('T', ' ')}
+                      {expired && <span className="ml-1 text-[9px] text-red-400/60">(expired)</span>}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-white/20 font-body italic">no end date</span>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       </div>
 
@@ -824,7 +849,16 @@ export function CampaignManager() {
 
   const handleToggle = async (c: Campaign) => {
     setToggling(c.id);
-    try { await api.updateCampaign(c.id, { active: c.active === 1 ? 0 : 1 }); await load(); }
+    try {
+      const isReactivating = c.active === 0;
+      await api.updateCampaign(c.id, {
+        active: isReactivating ? 1 : 0,
+        // When reactivating an expired campaign, clear the old date window
+        // so it runs indefinitely from now. Dates can be re-set in Edit.
+        ...(isReactivating ? { start_date: null, end_date: null } : {}),
+      });
+      await load();
+    }
     catch (e) { alert(e instanceof Error ? e.message : 'Failed'); }
     finally { setToggling(null); }
   };
