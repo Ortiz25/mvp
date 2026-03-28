@@ -2,15 +2,11 @@
 const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../db/migrate');
 
-// ── Shared DB connection for high-frequency heartbeat writes ──────────────
-// Opening/closing a new SQLite connection on every 5-second heartbeat from
-// every active viewer is wasteful. We keep one persistent connection for
-// video_progress writes and reopen it only if it gets closed unexpectedly.
+// ── Shared DB connection for high-frequency heartbeat writes (Fix 4) ──────
+// Avoids open/close overhead on every 5-second heartbeat from every viewer.
 let _sharedDb = null;
 function getSharedDb() {
-  if (!_sharedDb || !_sharedDb.open) {
-    _sharedDb = getDb();
-  }
+  if (!_sharedDb || !_sharedDb.open) _sharedDb = getDb();
   return _sharedDb;
 }
 
@@ -62,13 +58,26 @@ function needsNewSession(existingSession, watchFrequency) {
       return true;
 
     case 'once_per_day': {
-      // Reset only if the last grant was on a previous calendar day
+      // Reset only if the last grant was on a previous calendar day (local EAT time).
+      //
+      // IMPORTANT: Both sides must use the same timezone.
+      // granted_at is stored as "YYYY-MM-DD HH:MM:SS" local time by markAccessGranted()
+      // using JS local-time methods (getFullYear/getMonth/getDate).
+      //
+      // DO NOT use toLocaleDateString('en-CA') — on Node.js without full ICU data
+      // (default on Raspberry Pi OS), Intl uses UTC regardless of TZ env var.
+      // In EAT (UTC+3) this creates a 3-hour window (00:00–03:00 EAT) where the
+      // UTC date is still yesterday, causing false "already watched" pop-ups.
+      //
+      // Fix: build today's date string using the same local-time methods.
       const grantDate = existingSession.granted_at
         ? existingSession.granted_at.slice(0, 10)
         : existingSession.created_at
           ? existingSession.created_at.slice(0, 10)
           : null;
-      const today = new Date().toLocaleDateString('en-CA');
+      const now   = new Date();
+      const pad   = n => String(n).padStart(2, '0');
+      const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
       return grantDate !== today;
     }
 
@@ -217,7 +226,7 @@ function markAccessGranted(id, hours) {
 // ── Video progress / drop-off tracking ────────────────────────────────────
 
 function upsertVideoProgress(sessionId, campaignId, watchedPct, completed = false, started = false) {
-  // Fix 4: use shared persistent connection — avoids open/close on every 5s heartbeat
+  // Fix 4: use shared persistent connection — no open/close on every 5s heartbeat
   const db = getSharedDb();
   const existing = db.prepare('SELECT * FROM video_progress WHERE session_id=?').get(sessionId);
   if (!existing) {
@@ -226,7 +235,6 @@ function upsertVideoProgress(sessionId, campaignId, watchedPct, completed = fals
        VALUES(?,?,?,?,?,?,?,datetime('now'))`
     ).run(uuidv4(), sessionId, campaignId, watchedPct, watchedPct, started ? 1 : 0, completed ? 1 : 0);
   } else {
-    // Only update watched_pct if moving forward (never rewind progress)
     const newPct = Math.max(existing.watched_pct, watchedPct);
     db.prepare(`
       UPDATE video_progress
@@ -234,11 +242,10 @@ function upsertVideoProgress(sessionId, campaignId, watchedPct, completed = fals
       WHERE session_id=?
     `).run(newPct, watchedPct, started ? 1 : existing.started, completed ? 1 : existing.completed, sessionId);
   }
-  // Note: do NOT close _sharedDb here — it is reused across calls
+  // Do NOT close _sharedDb — reused across calls
 }
 
-// Fix 3: record that the user actually pressed play (first real watch event)
-// Called separately from upsertVideoProgress so heartbeats don't re-set it
+// Fix 3: record first actual play event (fired once at 1s of playback)
 function markVideoStarted(sessionId, campaignId) {
   const db = getSharedDb();
   const existing = db.prepare('SELECT id FROM video_progress WHERE session_id=?').get(sessionId);
@@ -253,9 +260,7 @@ function markVideoStarted(sessionId, campaignId) {
 }
 
 function markVideoDropOff(sessionId) {
-  // Fix 2: use shared DB; also only mark drop-off if this session's row
-  // is not already completed (guards against stale sessionId from a previous
-  // cycle being passed in after a new session was created for 'always' campaigns)
+  // Fix 2: use shared DB; !completed guard prevents stale-session double-marking
   const db = getSharedDb();
   const row = db.prepare('SELECT * FROM video_progress WHERE session_id=?').get(sessionId);
   if (row && !row.completed && !row.dropped_off) {
@@ -265,7 +270,7 @@ function markVideoDropOff(sessionId) {
       WHERE session_id=?
     `).run(sessionId);
   }
-  // Note: do NOT close _sharedDb
+  // Do NOT close _sharedDb
 }
 
 function getVideoEngagementStats(campaignId = null) {

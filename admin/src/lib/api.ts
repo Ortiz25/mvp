@@ -152,8 +152,7 @@ export const api = {
   engagementStats: (campaignId: string) =>
     req<{ stats: {
       summary: {
-        total_views: number; started: number; bounce_count: number;
-        bounce_rate: number | null; completed: number; dropped_off: number;
+        total_views: number; completed: number; dropped_off: number;
         still_watching: number; avg_watch_pct: number | null;
         avg_completion_pct: number | null; avg_drop_pct: number | null;
         completion_rate: number | null; drop_rate: number | null;

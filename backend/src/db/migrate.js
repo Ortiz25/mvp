@@ -65,19 +65,6 @@ function migrate() {
       options    TEXT NOT NULL,
       sort_order INTEGER NOT NULL DEFAULT 0
     );
-    CREATE TABLE IF NOT EXISTS video_progress (
-      id           TEXT PRIMARY KEY,
-      session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      campaign_id  TEXT NOT NULL,
-      watched_pct  REAL NOT NULL DEFAULT 0,
-      last_pct     REAL NOT NULL DEFAULT 0,
-      completed    INTEGER NOT NULL DEFAULT 0,
-      dropped_off  INTEGER NOT NULL DEFAULT 0,
-      drop_pct     REAL,
-      updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE INDEX IF NOT EXISTS idx_vp_session ON video_progress(session_id);
-    CREATE INDEX IF NOT EXISTS idx_vp_campaign ON video_progress(campaign_id);
     CREATE TABLE IF NOT EXISTS sessions (
       id             TEXT PRIMARY KEY,
       campaign_id    TEXT NOT NULL REFERENCES campaigns(id),
@@ -121,7 +108,6 @@ function migrate() {
     console.log('  ↳ added challenge column to sessions');
   }
 
-  // Add watch_frequency to existing campaigns tables
   const campCols = db.prepare('PRAGMA table_info(campaigns)').all().map(c => c.name);
   if (!campCols.includes('watch_frequency')) {
     db.exec(`ALTER TABLE campaigns ADD COLUMN watch_frequency TEXT NOT NULL DEFAULT 'once_per_day'`);
@@ -136,16 +122,7 @@ function migrate() {
     console.log('  ↳ added require_video column to campaigns');
   }
 
-  // video_progress: add started column if missing
-  try {
-    const vpCols = db.prepare('PRAGMA table_info(video_progress)').all().map(r => r.name);
-    if (!vpCols.includes('started')) {
-      db.exec('ALTER TABLE video_progress ADD COLUMN started INTEGER NOT NULL DEFAULT 0');
-      console.log('  ↳ added started column to video_progress');
-    }
-  } catch {}
-
-  // video_progress table for drop-off analytics
+  // video_progress: create with started column, or add it if missing
   db.exec(`
     CREATE TABLE IF NOT EXISTS video_progress (
       id           TEXT PRIMARY KEY,
@@ -162,6 +139,14 @@ function migrate() {
     CREATE INDEX IF NOT EXISTS idx_vp_session ON video_progress(session_id);
     CREATE INDEX IF NOT EXISTS idx_vp_campaign ON video_progress(campaign_id);
   `);
+  // Add started column to existing video_progress tables that predate this migration
+  try {
+    const vpCols = db.prepare('PRAGMA table_info(video_progress)').all().map(r => r.name);
+    if (!vpCols.includes('started')) {
+      db.exec('ALTER TABLE video_progress ADD COLUMN started INTEGER NOT NULL DEFAULT 0');
+      console.log('  ↳ added started column to video_progress');
+    }
+  } catch {}
 
   console.log('✅ DB migrated');
   db.close();

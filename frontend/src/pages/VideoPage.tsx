@@ -27,17 +27,16 @@ export function VideoPage() {
   const [submitting,    setSubmitting]    = useState(false);
   const [error,         setError]         = useState('');
 
-  // Fix 1+2: completedThisVisit is set to true as soon as the user clicks
-  // Continue (before navigation) — prevents false drop-off beacon firing
-  // during the brief visibility-hidden moment that occurs on SPA navigation.
-  // Also prevents the beacon using a stale sessionId after 'always' mode
-  // creates a new session.
+  // completedThisVisit: video was completed AND access was successfully
+  // granted in this page visit. Reset to false on every mount so the user
+  // can always re-watch if they return (e.g. grant failed and they came back).
   const completedThisVisit = useRef(false);
 
-  // Fix 3: track whether we've already fired the video/start ping
+  // Fix 3: track whether video/start has been sent for this session
   const startPingFired = useRef(false);
 
-  // Ref mirrors watchedPct for use in event listener closures (stale-closure fix)
+  // Keep a ref to the latest watchedPct so the drop-off beacon closure
+  // always reads the current value (state closures in event listeners are stale).
   const watchedPctRef = useRef(0);
   useEffect(() => { watchedPctRef.current = watchedPct; }, [watchedPct]);
 
@@ -46,7 +45,8 @@ export function VideoPage() {
     if (!loading && !config) refresh();
   }, [selectedSlug]);
 
-  // Guard: survey-only campaign — don't show VideoPage
+  // Guard: if this campaign doesn't require a video, don't show VideoPage at all.
+  // Can happen if user lands on /watch via back button or direct URL.
   useEffect(() => {
     if (!config) return;
     if (config.campaign?.requireVideo === false) {
@@ -60,12 +60,26 @@ export function VideoPage() {
       navigate('/connecting', { replace: true }); return;
     }
 
-    const freq          = status?.watchFrequency  ?? 'once_per_day';
+    const freq         = status?.watchFrequency  ?? 'once_per_day';
     const requireSurvey = config?.campaign?.requireSurvey ?? status?.requireSurvey ?? true;
 
+    // videoWatched=true in DB means:
+    //   - 'always' mode: stale from previous cycle — let them re-watch
+    //   - 'once_per_day' / 'once_ever' WITH survey: already consumed this window
+    //   - no-survey campaign: videoWatched+accessGranted should have happened
+    //     together — if we're here with videoWatched=true but not granted,
+    //     it means a previous grant attempt failed. Let them retry: don't navigate away.
     if (status?.videoWatched && !completedThisVisit.current) {
-      if (freq === 'always') return;
-      if (!requireSurvey) return;
+      if (freq === 'always') return; // stale — stay and re-watch
+
+      if (!requireSurvey) {
+        // Grant must have failed last time — reset video_watched so they can retry
+        // by staying on this page. The button will re-submit videoComplete (backend
+        // is idempotent: it just re-sets video_watched=1) then try grant again.
+        return;
+      }
+
+      // Survey campaign, already watched this window — send back to picker
       const msg = freq === 'once_ever'
         ? "You have already watched this campaign's content. Pick another campaign to get access."
         : "You have already watched today's content. Come back tomorrow or pick another campaign.";
@@ -74,21 +88,16 @@ export function VideoPage() {
   }, [loading, status, config]);
 
   // ── Drop-off beacon ───────────────────────────────────────────────────────
-  // Fix 1: completedThisVisit is set BEFORE navigate() in handleContinue, so
-  //   visibilitychange during SPA navigation no longer fires the beacon.
-  // Fix 2: sessionId is captured at effect registration time. If 'always' mode
-  //   creates a new session on the next cycle, a new mount re-registers the
-  //   effect with the new sessionId. The old closure correctly references the
-  //   old sessionId — but markVideoDropOff's !completed guard prevents
-  //   double-marking a session that was already completed.
+  // Uses a ref for watchedPct to avoid the stale-closure problem with state
+  // inside event listeners that are only registered once.
   useEffect(() => {
     if (!selectedSlug || !status?.sessionId) return;
-    const sessionId = status.sessionId; // captured — won't go stale for this mount
+    const sessionId = status.sessionId;
 
     const sendDropOff = () => {
       if (completedThisVisit.current) return;
       const pct = watchedPctRef.current;
-      if (pct < 0.01) return; // never played — not a drop-off
+      if (pct < 0.01) return; // never really started — don't record
       try {
         navigator.sendBeacon(
           `/api/${selectedSlug}/video/dropoff`,
@@ -99,16 +108,16 @@ export function VideoPage() {
 
     const onVisibility = () => { if (document.hidden) sendDropOff(); };
     document.addEventListener('visibilitychange', onVisibility);
-    window.addEventListener('pagehide',     sendDropOff); // iOS Safari
+    window.addEventListener('pagehide',    sendDropOff); // mobile Safari
     window.addEventListener('beforeunload', sendDropOff);
     return () => {
       document.removeEventListener('visibilitychange', onVisibility);
-      window.removeEventListener('pagehide',     sendDropOff);
+      window.removeEventListener('pagehide',    sendDropOff);
       window.removeEventListener('beforeunload', sendDropOff);
     };
-  }, [selectedSlug, status?.sessionId]);
+  }, [selectedSlug, status?.sessionId]); // intentionally not including watchedPct — using ref
 
-  // ── Progress heartbeat every 5 s ─────────────────────────────────────────
+  // ── Progress heartbeat every 5 s ──────────────────────────────────────────
   useEffect(() => {
     if (!selectedSlug || !status?.sessionId) return;
     const sessionId = status.sessionId;
@@ -130,8 +139,7 @@ export function VideoPage() {
     setWatchedPct(pct);
     if (pct >= requiredPct && !canContinue) setCanContinue(true);
 
-    // Fix 3: fire video/start once when playback reaches 1 second
-    // (avoids counting scrubbers/seekers who jump around without watching)
+    // Fix 3: fire video/start once at 1 second of playback
     if (!startPingFired.current && v.currentTime >= 1 && status?.sessionId && selectedSlug) {
       startPingFired.current = true;
       portalApi.videoStart(selectedSlug, status.sessionId).catch(() => {});
@@ -144,23 +152,22 @@ export function VideoPage() {
     setError('');
 
     try {
+      // 1. Mark video watched (idempotent — safe to call even if already set)
       await portalApi.videoComplete(selectedSlug, status.sessionId, watchedPctRef.current);
-
-      // Fix 1: set completedThisVisit BEFORE any navigation so that the
-      // visibilitychange event (which briefly fires hidden=true during SPA
-      // route transitions in some browsers) does not trigger a false drop-off.
-      completedThisVisit.current = true;
 
       const requireSurvey =
         config?.campaign?.requireSurvey ?? status?.requireSurvey ?? true;
 
       if (requireSurvey) {
+        // Fix 1: set completedThisVisit BEFORE navigate so visibilitychange
+        // during SPA route transition doesn't fire a false drop-off beacon
+        completedThisVisit.current = true;
         await refresh();
         navigate('/survey', { replace: true });
         return;
       }
 
-      // No survey — grant here
+      // ── No-survey: grant access here ──────────────────────────────────────
       let challenge = hotspot.challenge;
       if (!challenge) {
         try {
@@ -173,11 +180,16 @@ export function VideoPage() {
 
       await portalApi.grantAccess(selectedSlug, status.sessionId, challenge);
       clearChallenge();
+
+      // Mark fully done only after a successful grant — so if grant fails and
+      // the user comes back to /watch, completedThisVisit stays false and they
+      // can retry without being routed away.
+      completedThisVisit.current = true;
+
       navigate('/connecting', { replace: true });
 
     } catch (e) {
-      // Grant or videoComplete failed — reset so user can retry
-      completedThisVisit.current = false;
+      completedThisVisit.current = false; // reset so user can retry
       setSubmitting(false);
       setError(e instanceof Error ? e.message : 'Failed — try again');
     }
@@ -191,8 +203,8 @@ export function VideoPage() {
     );
   }
 
-  const video    = config?.video;
-  const noSurvey = config?.campaign?.requireSurvey === false;
+  const video       = config?.video;
+  const noSurvey    = config?.campaign?.requireSurvey === false;
 
   return (
     <div className="px-5 py-5">

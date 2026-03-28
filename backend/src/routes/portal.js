@@ -352,9 +352,8 @@ router.get('/:slug/challenge', async (req, res) => {
 });
 
 // ── POST /api/:slug/video/start ──────────────────────────────────────────
-// Fix 3: called once when the user actually presses play (first timeupdate > 1s).
-// Creates the video_progress row with started=1, recording that they engaged
-// with the video — not just loaded the page. Enables bounce rate tracking.
+// Fix 3: fired once when the user actually presses play (currentTime >= 1s).
+// Records started=1 for bounce rate tracking. Safe to call multiple times.
 router.post('/:slug/video/start', (req, res) => {
   const { sessionId } = req.body;
   if (!sessionId) return res.status(400).json({ error: 'sessionId required' });

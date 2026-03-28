@@ -854,7 +854,7 @@ export function CampaignManager() {
       await api.updateCampaign(c.id, {
         active: isReactivating ? 1 : 0,
         // When reactivating an expired campaign, clear the old date window
-        // so it runs indefinitely from now. Dates can be re-set in Edit.
+        // so it runs indefinitely. Set fresh dates via Edit if needed.
         ...(isReactivating ? { start_date: null, end_date: null } : {}),
       });
       await load();
