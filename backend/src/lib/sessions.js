@@ -58,7 +58,17 @@ function needsNewSession(existingSession, watchFrequency) {
       return true;
 
     case 'once_per_day': {
-      // Reset only if the last grant was on a previous calendar day (local EAT time).
+      // Always create a new session when the grant has expired — even on the same
+      // calendar day. The new session will have video_watched=1 if they already
+      // watched today, so they skip the video and go straight to grant/survey.
+      // Without this, the expired session is reused with video_watched=1, which
+      // causes VideoPage to redirect back to PickerPage with dismissedSlug set,
+      // making the campaign disappear from the list.
+      //
+      // "Same day = skip re-watch" is enforced separately in VideoPage by
+      // checking video_watched on the new session.
+      //
+      // Original EAT timezone note: Both sides use local-time methods.
       //
       // IMPORTANT: Both sides must use the same timezone.
       // granted_at is stored as "YYYY-MM-DD HH:MM:SS" local time by markAccessGranted()
@@ -78,16 +88,16 @@ function needsNewSession(existingSession, watchFrequency) {
       const now   = new Date();
       const pad   = n => String(n).padStart(2, '0');
       const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-      return grantDate !== today;
+      // Always create a new session — either different day (must re-watch)
+      // or same day expired (skip re-watch but need fresh grant).
+      // The new session carries video_watched from below.
+      return true;
     }
 
     case 'once_ever':
-      // The user never needs to re-watch the video or redo the survey.
-      // BUT they DO need a new session when their previous grant expires —
-      // otherwise the expired session is reused and they can never get access
-      // again. A new session will be created with video_watched=1 and
-      // survey_done=1 (copied below in getOrCreateSession) so they go
-      // straight to the grant step without re-watching.
+      // User never re-watches, but DOES need a new session to get a new grant
+      // when their previous one expires. New session is created with
+      // video_watched=1, survey_done=1 so they skip straight to grant.
       return true;
 
     default:
@@ -133,21 +143,42 @@ function getOrCreateSession(ip, campaignId, mac = null, dst = null, challenge = 
 
     // Check if we need a fresh session based on watch_frequency
     if (needsNewSession(existing, watchFrequency)) {
-      // Frequency window has reset — create a new session.
-      // For once_ever: carry forward video_watched=1 and survey_done=1 so
-      // the user skips straight to the grant step — they already watched once.
-      // For once_per_day / always: start fresh (video_watched=0, survey_done=0).
-      const carryForward = watchFrequency === 'once_ever';
-      const prevVideoWatched = carryForward ? (existing.video_watched ? 1 : 0) : 0;
-      const prevSurveyDone   = carryForward ? (existing.survey_done   ? 1 : 0) : 0;
-      console.log(`[SESSION] Frequency=${watchFrequency} reset for mac=${mac} — new session (video=${prevVideoWatched} survey=${prevSurveyDone})`);
+      // Determine whether to carry forward video_watched and survey_done.
+      //
+      // once_ever: always carry both — user already did the engagement work.
+      //
+      // once_per_day: carry if the original grant was TODAY (same calendar day).
+      //   Same-day expiry means they already watched today — skip re-watch.
+      //   Different day means window has reset — start fresh (video_watched=0).
+      let carryVideo = false, carrySurvey = false;
+      if (watchFrequency === 'once_ever') {
+        carryVideo  = !!existing.video_watched;
+        carrySurvey = !!existing.survey_done;
+      } else if (watchFrequency === 'once_per_day') {
+        const grantDate = existing.granted_at
+          ? existing.granted_at.slice(0, 10)
+          : existing.created_at
+            ? existing.created_at.slice(0, 10) : null;
+        const now = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+        if (grantDate === today) {
+          // Same-day top-up — skip re-watch, carry completion state
+          carryVideo  = !!existing.video_watched;
+          carrySurvey = !!existing.survey_done;
+        }
+        // Different day: carryVideo=false, carrySurvey=false → full re-watch
+      }
+      const vw = carryVideo  ? 1 : 0;
+      const sd = carrySurvey ? 1 : 0;
+      console.log(`[SESSION] Frequency=${watchFrequency} reset for mac=${mac} — new session (video=${vw} survey=${sd})`);
       const id = uuidv4();
       db.prepare(
         `INSERT INTO sessions
            (id, campaign_id, ip_address, mac_address, dst_url, challenge,
             video_watched, survey_done, access_granted)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`
-      ).run(id, campaignId, ip, mac, dst, challenge, prevVideoWatched, prevSurveyDone);
+      ).run(id, campaignId, ip, mac, dst, challenge, vw, sd);
       const created = db.prepare('SELECT * FROM sessions WHERE id=?').get(id);
       db.close();
       return row2s(created);

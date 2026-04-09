@@ -70,29 +70,22 @@ export function VideoPage() {
     //     together — if we're here with videoWatched=true but not granted,
     //     it means a previous grant attempt failed. Let them retry: don't navigate away.
     if (status?.videoWatched && !completedThisVisit.current) {
-      if (freq === 'always') return; // stale — stay and re-watch
+      if (freq === 'always') return; // always mode — re-watch every session
 
-      // once_ever: user already watched the video in a previous session.
-      // They need a new ACCESS GRANT but NOT to re-watch. The new session
-      // was created with video_watched=1 already set (see getOrCreateSession).
-      // Route them directly to survey (if required) or grant.
-      if (freq === 'once_ever') {
-        if (requireSurvey && !status.surveyDone) {
-          navigate('/survey', { replace: true });
-        } else {
-          navigate('/survey', { replace: true }); // SurveyPage handles grant when surveyDone=true
-        }
-        return;
+      // video_watched=true on the new session means:
+      //   once_ever  → carried from previous session, skip to survey/grant
+      //   once_per_day same-day top-up → already watched today, skip to survey/grant
+      //   once_per_day new day → shouldn't happen (new session has video_watched=0)
+      //
+      // In all these cases we should NOT send them back to the picker.
+      // Route to survey if required, otherwise SurveyPage handles the grant.
+      if (requireSurvey) {
+        navigate('/survey', { replace: true });
+      } else {
+        // No survey — go straight to connecting; SurveyPage doGrant will fire
+        navigate('/survey', { replace: true });
       }
-
-      if (!requireSurvey) {
-        // No survey — grant must have failed last time. Stay and let them retry.
-        return;
-      }
-
-      // once_per_day survey campaign, already watched today — back to picker
-      const msg = "You have already watched today's content. Come back tomorrow or pick another campaign.";
-      navigate('/', { replace: true, state: { notice: msg, dismissedSlug: selectedSlug } });
+      return;
     }
   }, [loading, status, config]);
 

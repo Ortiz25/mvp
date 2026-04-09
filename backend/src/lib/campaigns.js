@@ -4,10 +4,6 @@ const { getDb } = require('../db/migrate');
 
 function getAllCampaigns(includeInactive = false) {
   const db = getDb();
-  // Filter by active=1 AND date window (same logic as getCampaignConfig).
-  // This keeps the picker and config in sync — a campaign that won't respond
-  // to /config (because start_date is in the future or end_date has passed)
-  // won't appear in the picker list either.
   const where = includeInactive
     ? ''
     : `WHERE c.active=1

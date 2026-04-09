@@ -35,8 +35,7 @@ export function SurveyPage() {
       navigate('/watch', { replace: true }); return;
     }
 
-    // once_ever: if they've already completed the survey in a previous session,
-    // skip straight to grant — no need to answer the same questions again.
+    // Skip survey if already completed (once_ever carry-forward, or same-day top-up)
     if (status?.surveyDone) {
       doGrant();
       return;
