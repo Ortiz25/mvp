@@ -82,8 +82,13 @@ function needsNewSession(existingSession, watchFrequency) {
     }
 
     case 'once_ever':
-      // Never reset — reuse session forever
-      return false;
+      // The user never needs to re-watch the video or redo the survey.
+      // BUT they DO need a new session when their previous grant expires —
+      // otherwise the expired session is reused and they can never get access
+      // again. A new session will be created with video_watched=1 and
+      // survey_done=1 (copied below in getOrCreateSession) so they go
+      // straight to the grant step without re-watching.
+      return true;
 
     default:
       return false;
@@ -128,16 +133,21 @@ function getOrCreateSession(ip, campaignId, mac = null, dst = null, challenge = 
 
     // Check if we need a fresh session based on watch_frequency
     if (needsNewSession(existing, watchFrequency)) {
-      // Frequency window has reset — create a new session so video/survey
-      // run again. The old session record is kept for analytics.
-      console.log(`[SESSION] Frequency=${watchFrequency} reset for mac=${mac} — creating fresh session`);
+      // Frequency window has reset — create a new session.
+      // For once_ever: carry forward video_watched=1 and survey_done=1 so
+      // the user skips straight to the grant step — they already watched once.
+      // For once_per_day / always: start fresh (video_watched=0, survey_done=0).
+      const carryForward = watchFrequency === 'once_ever';
+      const prevVideoWatched = carryForward ? (existing.video_watched ? 1 : 0) : 0;
+      const prevSurveyDone   = carryForward ? (existing.survey_done   ? 1 : 0) : 0;
+      console.log(`[SESSION] Frequency=${watchFrequency} reset for mac=${mac} — new session (video=${prevVideoWatched} survey=${prevSurveyDone})`);
       const id = uuidv4();
       db.prepare(
         `INSERT INTO sessions
            (id, campaign_id, ip_address, mac_address, dst_url, challenge,
             video_watched, survey_done, access_granted)
-         VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0)`
-      ).run(id, campaignId, ip, mac, dst, challenge);
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`
+      ).run(id, campaignId, ip, mac, dst, challenge, prevVideoWatched, prevSurveyDone);
       const created = db.prepare('SELECT * FROM sessions WHERE id=?').get(id);
       db.close();
       return row2s(created);

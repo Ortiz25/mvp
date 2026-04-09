@@ -72,17 +72,26 @@ export function VideoPage() {
     if (status?.videoWatched && !completedThisVisit.current) {
       if (freq === 'always') return; // stale — stay and re-watch
 
-      if (!requireSurvey) {
-        // Grant must have failed last time — reset video_watched so they can retry
-        // by staying on this page. The button will re-submit videoComplete (backend
-        // is idempotent: it just re-sets video_watched=1) then try grant again.
+      // once_ever: user already watched the video in a previous session.
+      // They need a new ACCESS GRANT but NOT to re-watch. The new session
+      // was created with video_watched=1 already set (see getOrCreateSession).
+      // Route them directly to survey (if required) or grant.
+      if (freq === 'once_ever') {
+        if (requireSurvey && !status.surveyDone) {
+          navigate('/survey', { replace: true });
+        } else {
+          navigate('/survey', { replace: true }); // SurveyPage handles grant when surveyDone=true
+        }
         return;
       }
 
-      // Survey campaign, already watched this window — send back to picker
-      const msg = freq === 'once_ever'
-        ? "You have already watched this campaign's content. Pick another campaign to get access."
-        : "You have already watched today's content. Come back tomorrow or pick another campaign.";
+      if (!requireSurvey) {
+        // No survey — grant must have failed last time. Stay and let them retry.
+        return;
+      }
+
+      // once_per_day survey campaign, already watched today — back to picker
+      const msg = "You have already watched today's content. Come back tomorrow or pick another campaign.";
       navigate('/', { replace: true, state: { notice: msg, dismissedSlug: selectedSlug } });
     }
   }, [loading, status, config]);

@@ -35,6 +35,13 @@ export function SurveyPage() {
       navigate('/watch', { replace: true }); return;
     }
 
+    // once_ever: if they've already completed the survey in a previous session,
+    // skip straight to grant — no need to answer the same questions again.
+    if (status?.surveyDone) {
+      doGrant();
+      return;
+    }
+
     // Auto-grant if no survey questions (survey enabled but empty)
     if (!config.survey?.questions?.length) {
       doGrant();

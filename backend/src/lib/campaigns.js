@@ -4,7 +4,15 @@ const { getDb } = require('../db/migrate');
 
 function getAllCampaigns(includeInactive = false) {
   const db = getDb();
-  const where = includeInactive ? '' : 'WHERE c.active=1';
+  // Filter by active=1 AND date window (same logic as getCampaignConfig).
+  // This keeps the picker and config in sync — a campaign that won't respond
+  // to /config (because start_date is in the future or end_date has passed)
+  // won't appear in the picker list either.
+  const where = includeInactive
+    ? ''
+    : `WHERE c.active=1
+         AND (c.start_date IS NULL OR c.start_date <= datetime('now','localtime'))
+         AND (c.end_date   IS NULL OR c.end_date   >= datetime('now','localtime'))`;
   const rows = db.prepare(`
     SELECT c.*,
       COALESCE(v.required_watch_pct, 0.8) AS video_required_pct,
