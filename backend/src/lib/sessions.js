@@ -167,6 +167,7 @@ function getOrCreateSession(ip, campaignId, mac = null, dst = null, challenge = 
     // and bouncing the user back to the picker. The frequency window resets only after
     // the active session has fully expired.
     if (isSessionActive(existing)) {
+      // NOTE: we do NOT flush the cache here — active sessions are safe to cache.
       // Reuse and patch mutable fields (IP may have changed via DHCP reassignment)
       db.prepare(`
         UPDATE sessions
@@ -180,6 +181,10 @@ function getOrCreateSession(ip, campaignId, mac = null, dst = null, challenge = 
       setCachedSession(cacheKey, active);
       return active;
     }
+
+    // Session is expired — immediately purge it from cache so the next
+    // /status call reads fresh state from DB instead of serving stale data.
+    _sessionCache.delete(cacheKey);
 
     // Check if we need a fresh session based on watch_frequency
     if (needsNewSession(existing, watchFrequency)) {

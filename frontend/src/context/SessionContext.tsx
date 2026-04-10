@@ -153,6 +153,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const [campaigns,    setCampaigns]    = useState<CampaignSummary[]>([]);
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
+  // If CoovaChilli just redirected with a fresh challenge, any status from a
+  // previous session is stale. Start with null so PickerPage won't grey out
+  // campaigns based on the old session's videoWatched flag.
+  const hasFreshParams = !!(hotspotRef.current.challenge);
   const [status,       setStatus]       = useState<PortalStatus | null>(null);
   const [config,       setConfig]       = useState<CampaignConfig | null>(null);
   const [loading,      setLoading]      = useState(false);

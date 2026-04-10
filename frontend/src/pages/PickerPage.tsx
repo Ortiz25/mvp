@@ -165,9 +165,11 @@ export function PickerPage() {
 
     // ── Path 2: fresh page load / CoovaChilli redirect — no location.state ──
     // Read restriction directly from the live /status response.
-    // If this campaign's session has videoWatched=true and is not active,
-    // the user already consumed their engagement window.
+    // Only apply this if we arrived WITHOUT a VideoPage dismissal — otherwise
+    // we rely exclusively on Path 1 above so reconnecting users are never
+    // incorrectly greyed out.
     if (
+      !dismissedSlug &&
       status &&
       !status.active &&
       status.campaignSlug === camp.slug &&
@@ -209,9 +211,17 @@ export function PickerPage() {
       navigate('/connecting', { replace: true });
       return;
     }
-    // Keep status in context if it has engagement data — getRestriction()
-    // reads status.videoWatched to grey out the card on fresh page loads.
-    // Only clear truly empty sessions (no engagement yet).
+    // If status has engagement data (videoWatched / surveyDone) but we arrived
+    // here WITHOUT a dismissedSlug in location.state, the user reconnected fresh
+    // (e.g. CoovaChilli redirect after session expiry). In that case the stale
+    // status must be cleared so getRestriction() doesn't grey out the campaign.
+    // We only keep status around when VideoPage explicitly navigated here with
+    // dismissedSlug — that's the only time we want to show the restriction UI.
+    if (!dismissedSlug && (status.videoWatched || status.surveyDone)) {
+      setStatus(null);
+      return;
+    }
+    // Clear truly empty sessions (no engagement yet) as before.
     if (!status.videoWatched && !status.surveyDone) {
       setStatus(null);
     }
