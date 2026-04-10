@@ -93,14 +93,19 @@ function readHotspotParams(): HotspotParams {
   dst = sanitizeDst(dst);
 
   if (mac || challenge) {
+    // Fresh URL params from CoovaChilli redirect — always take priority.
+    // This handles the case where a previous session cleared the challenge
+    // from sessionStorage and CoovaChilli is now redirecting with a new one.
     const params: HotspotParams = { mac, ip, dst, challenge, chilliSid };
     _cached = params;
     try { sessionStorage.setItem(SS_KEY, JSON.stringify(params)); } catch {}
-    console.log('[Hotspot] Cached:', { mac, ip, dst, challenge: challenge ? '***' : null, chilliSid });
+    console.log('[Hotspot] Cached fresh URL params:', { mac, ip, challenge: challenge ? '***' : null });
     return params;
   }
 
-  // Restore from sessionStorage (SPA navigation loses URL params)
+  // No fresh URL params — restore from sessionStorage for SPA navigation.
+  // NOTE: sessionStorage challenge may be null (cleared after grant) which is
+  // correct — the challenge is single-use and fetched fresh at grant time.
   try {
     const stored = sessionStorage.getItem(SS_KEY);
     if (stored) {

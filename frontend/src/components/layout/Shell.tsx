@@ -149,25 +149,32 @@ export function Shell({ children }: { children: ReactNode }) {
     !!(status?.accessGranted && status?.active)
   );
 
+  // Keep hotspot in a ref so pollStatus can read it without being
+  // recreated on every render (avoids the interval-restart flood).
+  const hotspotRef = useRef(hotspot);
+  useEffect(() => { hotspotRef.current = hotspot; }, [hotspot]);
+
   // Poll status independently in Shell so the chip stays live on every page.
-  // Uses the same slug + hotspot params the rest of the app uses.
+  // IMPORTANT: only depend on selectedSlug (stable string), not hotspot object.
+  // hotspot is read via ref at call time so the interval never restarts just
+  // because the hotspot reference changed.
   const pollStatus = useCallback(async () => {
     const slug = selectedSlug;
     if (!slug) return;
     try {
-      const s = await portalApi.status(slug, hotspot);
+      const s = await portalApi.status(slug, hotspotRef.current);
       setIsOnline(!!(s.accessGranted && s.active));
     } catch {
-      // network error — don't flip to offline immediately, keep last state
+      // network error — keep last known state
     }
-  }, [selectedSlug, hotspot]);
+  }, [selectedSlug]); // intentionally NOT including hotspot — using ref
 
   // Sync immediately when status changes via refresh() in pages
   useEffect(() => {
     setIsOnline(!!(status?.accessGranted && status?.active));
   }, [status?.accessGranted, status?.active]);
 
-  // Background poll every 10s so chip updates even when pages don't refresh
+  // Background poll every 10s — interval is stable because pollStatus is stable
   useEffect(() => {
     if (!selectedSlug) return;
     pollStatus();

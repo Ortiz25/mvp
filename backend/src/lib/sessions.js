@@ -2,12 +2,45 @@
 const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('../db/migrate');
 
-// ── Shared DB connection for high-frequency heartbeat writes (Fix 4) ──────
-// Avoids open/close overhead on every 5-second heartbeat from every viewer.
+// ── Shared DB connection for high-frequency heartbeat writes ──────────────
 let _sharedDb = null;
 function getSharedDb() {
   if (!_sharedDb || !_sharedDb.open) _sharedDb = getDb();
   return _sharedDb;
+}
+
+// ── Session lookup cache — prevents DB storm on rapid /status calls ───────
+// After session expiry the frontend can fire dozens of /status calls per second
+// (Shell poll interval restarting). Without this, every call hits SQLite
+// simultaneously causing lock contention and 500 errors.
+// Cache: MAC+campaignId → { session, ts }. TTL = 2 seconds.
+const _sessionCache = new Map();
+const SESSION_CACHE_TTL = 2000; // ms
+
+function getCachedSession(key) {
+  const entry = _sessionCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > SESSION_CACHE_TTL) {
+    _sessionCache.delete(key);
+    return null;
+  }
+  return entry.session;
+}
+
+function setCachedSession(key, session) {
+  _sessionCache.set(key, { session, ts: Date.now() });
+  // Prune old entries to prevent memory leak
+  if (_sessionCache.size > 500) {
+    const cutoff = Date.now() - SESSION_CACHE_TTL * 5;
+    for (const [k, v] of _sessionCache) {
+      if (v.ts < cutoff) _sessionCache.delete(k);
+    }
+  }
+}
+
+function invalidateCache(mac, campaignId) {
+  // Called after grant/watch/survey to ensure next /status reads fresh from DB
+  if (mac) _sessionCache.delete(`${mac}:${campaignId}`);
 }
 
 function row2s(r) {
@@ -108,6 +141,11 @@ function needsNewSession(existingSession, watchFrequency) {
 // challenge = CoovaChilli UAM challenge token (from loginurl params)
 // campaignWatchFrequency = 'always' | 'once_per_day' | 'once_ever'
 function getOrCreateSession(ip, campaignId, mac = null, dst = null, challenge = null, watchFrequency = 'once_per_day') {
+  // Check in-memory cache first to prevent DB storm on rapid calls
+  const cacheKey = `${mac || ip}:${campaignId}`;
+  const cached = getCachedSession(cacheKey);
+  if (cached) return cached;
+
   const db = getDb();
   let row;
 
@@ -138,7 +176,9 @@ function getOrCreateSession(ip, campaignId, mac = null, dst = null, challenge = 
         WHERE id = ?
       `).run(ip, mac, row.id);
       db.close();
-      return row2s({ ...row, ip_address: ip, mac_address: mac || row.mac_address });
+      const active = row2s({ ...row, ip_address: ip, mac_address: mac || row.mac_address });
+      setCachedSession(cacheKey, active);
+      return active;
     }
 
     // Check if we need a fresh session based on watch_frequency
@@ -181,7 +221,9 @@ function getOrCreateSession(ip, campaignId, mac = null, dst = null, challenge = 
       ).run(id, campaignId, ip, mac, dst, challenge, vw, sd);
       const created = db.prepare('SELECT * FROM sessions WHERE id=?').get(id);
       db.close();
-      return row2s(created);
+      const newSession = row2s(created);
+      setCachedSession(cacheKey, newSession);
+      return newSession;
     }
 
     // Reuse existing session — update mutable fields
@@ -195,13 +237,15 @@ function getOrCreateSession(ip, campaignId, mac = null, dst = null, challenge = 
       WHERE id = ?
     `).run(ip, mac, dst, challenge, row.id);
     db.close();
-    return row2s({
+    const reused = row2s({
       ...row,
       ip_address:  ip,
       mac_address: mac       || row.mac_address,
       dst_url:     dst       || row.dst_url,
       challenge:   challenge || row.challenge,
     });
+    setCachedSession(cacheKey, reused);
+    return reused;
   }
 
   // No existing session — create fresh
@@ -214,7 +258,9 @@ function getOrCreateSession(ip, campaignId, mac = null, dst = null, challenge = 
   ).run(id, campaignId, ip, mac, dst, challenge);
   const created = db.prepare('SELECT * FROM sessions WHERE id=?').get(id);
   db.close();
-  return row2s(created);
+  const fresh = row2s(created);
+  setCachedSession(cacheKey, fresh);
+  return fresh;
 }
 
 function getSession(id) {
@@ -230,8 +276,10 @@ function isSessionActive(s) {
 
 function markVideoWatched(id) {
   const db = getDb();
+  const row = db.prepare('SELECT mac_address, campaign_id FROM sessions WHERE id=?').get(id);
   db.prepare(`UPDATE sessions SET video_watched=1, updated_at=datetime('now') WHERE id=?`).run(id);
   db.close();
+  if (row) invalidateCache(row.mac_address, row.campaign_id);
 }
 
 function markSurveyDone(id, answers) {
@@ -247,7 +295,10 @@ function markSurveyDone(id, answers) {
 }
 
 function markAccessGranted(id, hours) {
+  // Invalidate cache so next /status reads the fresh granted session
   const db = getDb();
+  const row = db.prepare('SELECT mac_address, campaign_id FROM sessions WHERE id=?').get(id);
+  if (row) invalidateCache(row.mac_address, row.campaign_id);
   const now     = new Date();
   const expires = new Date(now.getTime() + hours * 3600 * 1000);
   const pad = n => String(n).padStart(2, '0');
@@ -480,5 +531,6 @@ module.exports = {
   markVideoWatched, markSurveyDone, markAccessGranted,
   revokeSession, getAllSessions, getStats, getSurveyAggregates,
   upsertVideoProgress, markVideoStarted, markVideoDropOff, getVideoDropOffStats, getVideoEngagementStats,
+  invalidateCache,
   sweepStaleVideoProgress,
 };
