@@ -72,20 +72,19 @@ export function VideoPage() {
     if (status?.videoWatched && !completedThisVisit.current) {
       if (freq === 'always') return; // always mode — re-watch every session
 
-      // video_watched=true on the new session means:
-      //   once_ever  → carried from previous session, skip to survey/grant
-      //   once_per_day same-day top-up → already watched today, skip to survey/grant
-      //   once_per_day new day → shouldn't happen (new session has video_watched=0)
-      //
-      // In all these cases we should NOT send them back to the picker.
-      // Route to survey if required, otherwise SurveyPage handles the grant.
-      if (requireSurvey) {
+      if (freq === 'once_ever') {
+        // once_ever: user permanently completed engagement in a prior session.
+        // Skip video, go to survey (or straight to grant if survey also done).
         navigate('/survey', { replace: true });
-      } else {
-        // No survey — go straight to connecting; SurveyPage doGrant will fire
-        navigate('/survey', { replace: true });
+        return;
       }
-      return;
+
+      // once_per_day: video_watched=true means they already used today's session.
+      // Navigate back to picker with restriction info so the card is greyed out.
+      navigate('/', { replace: true, state: {
+        dismissedSlug: selectedSlug,
+        dismissedFreq: freq,   // 'once_per_day' — card shows "come back tomorrow"
+      }});
     }
   }, [loading, status, config]);
 

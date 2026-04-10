@@ -192,23 +192,14 @@ function getOrCreateSession(ip, campaignId, mac = null, dst = null, challenge = 
       //   Different day means window has reset — start fresh (video_watched=0).
       let carryVideo = false, carrySurvey = false;
       if (watchFrequency === 'once_ever') {
+        // once_ever: user permanently completed engagement — always carry forward
         carryVideo  = !!existing.video_watched;
         carrySurvey = !!existing.survey_done;
-      } else if (watchFrequency === 'once_per_day') {
-        const grantDate = existing.granted_at
-          ? existing.granted_at.slice(0, 10)
-          : existing.created_at
-            ? existing.created_at.slice(0, 10) : null;
-        const now = new Date();
-        const pad = n => String(n).padStart(2, '0');
-        const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-        if (grantDate === today) {
-          // Same-day top-up — skip re-watch, carry completion state
-          carryVideo  = !!existing.video_watched;
-          carrySurvey = !!existing.survey_done;
-        }
-        // Different day: carryVideo=false, carrySurvey=false → full re-watch
       }
+      // once_per_day: NEVER carry forward — each new session requires a fresh
+      // watch on a new calendar day. Same-day expiry means the daily quota is
+      // used up; the user sees "come back tomorrow" when they try to reconnect.
+      // (carryVideo and carrySurvey stay false)
       const vw = carryVideo  ? 1 : 0;
       const sd = carrySurvey ? 1 : 0;
       console.log(`[SESSION] Frequency=${watchFrequency} reset for mac=${mac} — new session (video=${vw} survey=${sd})`);

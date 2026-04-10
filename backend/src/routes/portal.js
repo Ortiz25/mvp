@@ -147,8 +147,9 @@ router.get('/campaigns', (_req, res) => {
     video_filename:     c.video_filename     || null,
     video_duration:     c.video_duration     || 120,
     video_required_pct: c.video_required_pct || 0.8,
-    require_video:      c.require_video  ?? 1,
-    require_survey:     c.require_survey ?? 1,
+    require_video:      c.require_video    ?? 1,
+    require_survey:     c.require_survey   ?? 1,
+    watch_frequency:    c.watch_frequency  || 'once_per_day',
   }));
   res.json({ campaigns });
 });

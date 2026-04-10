@@ -22,6 +22,7 @@ export interface CampaignSummary {
   video_required_pct: number;
   require_video:      number;
   require_survey:     number;
+  watch_frequency:    'always' | 'once_per_day' | 'once_ever';
 }
 
 export interface PortalStatus {
