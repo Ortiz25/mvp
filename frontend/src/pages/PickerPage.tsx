@@ -155,11 +155,29 @@ export function PickerPage() {
   const [starting,         setStarting]         = useState(false);
 
   const getRestriction = (camp: CampaignSummary): Restriction => {
-    if (camp.slug !== dismissedSlug) return null;
-    if (dismissedFreq === 'once_per_day') return 'once_per_day';
-    if (dismissedFreq === 'once_ever')    return 'once_ever';
-    if (camp.watch_frequency === 'once_per_day') return 'once_per_day';
-    if (camp.watch_frequency === 'once_ever')    return 'once_ever';
+    // ── Path 1: arrived from VideoPage with dismissedSlug in location.state ──
+    if (camp.slug === dismissedSlug) {
+      if (dismissedFreq === 'once_per_day') return 'once_per_day';
+      if (dismissedFreq === 'once_ever')    return 'once_ever';
+      if (camp.watch_frequency === 'once_per_day') return 'once_per_day';
+      if (camp.watch_frequency === 'once_ever')    return 'once_ever';
+    }
+
+    // ── Path 2: fresh page load / CoovaChilli redirect — no location.state ──
+    // Read restriction directly from the live /status response.
+    // If this campaign's session has videoWatched=true and is not active,
+    // the user already consumed their engagement window.
+    if (
+      status &&
+      !status.active &&
+      status.campaignSlug === camp.slug &&
+      status.videoWatched
+    ) {
+      const freq = status.watchFrequency ?? camp.watch_frequency;
+      if (freq === 'once_per_day') return 'once_per_day';
+      if (freq === 'once_ever')    return 'once_ever';
+    }
+
     return null;
   };
 
@@ -189,7 +207,12 @@ export function PickerPage() {
     if (!status) return;
     if (status.active) {
       navigate('/connecting', { replace: true });
-    } else {
+      return;
+    }
+    // Keep status in context if it has engagement data — getRestriction()
+    // reads status.videoWatched to grey out the card on fresh page loads.
+    // Only clear truly empty sessions (no engagement yet).
+    if (!status.videoWatched && !status.surveyDone) {
       setStatus(null);
     }
   }, [status]);

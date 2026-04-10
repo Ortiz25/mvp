@@ -35,9 +35,18 @@ export function SurveyPage() {
       navigate('/watch', { replace: true }); return;
     }
 
-    // Skip survey if already completed (once_ever carry-forward, or same-day top-up)
-    if (status?.surveyDone) {
+    // once_ever: permanently completed engagement — skip survey, grant directly
+    if (status?.surveyDone && status?.watchFrequency === 'once_ever') {
       doGrant();
+      return;
+    }
+    // once_per_day: surveyDone=true means today's quota is used.
+    // Send back to picker — the greyed-out card will explain the restriction.
+    if (status?.surveyDone && status?.watchFrequency === 'once_per_day') {
+      navigate('/', { replace: true, state: {
+        dismissedSlug: selectedSlug,
+        dismissedFreq: 'once_per_day',
+      }});
       return;
     }
 
