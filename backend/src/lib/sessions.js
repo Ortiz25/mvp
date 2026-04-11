@@ -200,11 +200,23 @@ function getOrCreateSession(ip, campaignId, mac = null, dst = null, challenge = 
         // once_ever: user permanently completed engagement — always carry forward
         carryVideo  = !!existing.video_watched;
         carrySurvey = !!existing.survey_done;
+      } else if (watchFrequency === 'once_per_day') {
+        // once_per_day: carry video_watched=1 only when the grant was on TODAY's
+        // calendar date (same-day expiry = quota already used today).
+        // Carrying video_watched=1 lets /status signal to PickerPage that the
+        // campaign is restricted ("come back tomorrow") without routing the user
+        // back through the video flow. On a different day carryVideo stays false
+        // so the normal re-watch cycle runs.
+        const grantDate = (existing.granted_at || existing.created_at || '').slice(0, 10);
+        const now = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+        if (grantDate === today && existing.video_watched) {
+          carryVideo  = true;
+          carrySurvey = !!existing.survey_done;
+        }
+        // Different day → carryVideo stays false → fresh watch required next day
       }
-      // once_per_day: NEVER carry forward — each new session requires a fresh
-      // watch on a new calendar day. Same-day expiry means the daily quota is
-      // used up; the user sees "come back tomorrow" when they try to reconnect.
-      // (carryVideo and carrySurvey stay false)
       const vw = carryVideo  ? 1 : 0;
       const sd = carrySurvey ? 1 : 0;
       console.log(`[SESSION] Frequency=${watchFrequency} reset for mac=${mac} — new session (video=${vw} survey=${sd})`);

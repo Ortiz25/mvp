@@ -154,6 +154,59 @@ router.get('/campaigns', (_req, res) => {
   res.json({ campaigns });
 });
 
+// ── GET /api/restrictions ─────────────────────────────────────────────────
+// Returns per-campaign restriction status for a given MAC address.
+// PickerPage calls this on mount so restricted campaigns are correctly grayed
+// out regardless of location.state (survives page reload and CoovaChilli
+// redirect — location.state only exists when VideoPage navigated here).
+//
+// Response: { restrictions: { [slug]: 'once_per_day' | 'once_ever' } }
+// A slug absent from the map means the user is free to watch/re-watch.
+router.get('/restrictions', async (req, res) => {
+  let mac = req.query.mac || null;
+  const ip = req.query.ip || getClientIp(req);
+  if (!mac && ip) mac = await getMacForIp(ip);
+  if (!mac) return res.json({ restrictions: {} });
+
+  const db = getDb();
+  // Most-recent granted session per campaign for this MAC
+  const rows = db.prepare(`
+    SELECT s.campaign_id, c.slug, c.watch_frequency,
+           s.video_watched, s.survey_done, s.access_granted,
+           s.granted_at, s.expires_at, s.created_at
+    FROM sessions s
+    JOIN campaigns c ON c.id = s.campaign_id
+    WHERE UPPER(REPLACE(s.mac_address, ':', '-')) = UPPER(REPLACE(?, ':', '-'))
+      AND s.access_granted = 1
+    GROUP BY s.campaign_id
+    HAVING s.created_at = MAX(s.created_at)
+  `).all(mac);
+  db.close();
+
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+
+  const restrictions = {};
+  for (const r of rows) {
+    if (r.watch_frequency === 'once_ever' && r.video_watched) {
+      // Permanently restricted — user already completed this campaign
+      restrictions[r.slug] = 'once_ever';
+    } else if (r.watch_frequency === 'once_per_day' && r.video_watched) {
+      // Restricted only if the most recent grant was today (same calendar day)
+      const grantDate = (r.granted_at || r.created_at || '').slice(0, 10);
+      if (grantDate === today) {
+        restrictions[r.slug] = 'once_per_day';
+      }
+      // Different day: no restriction — fresh watch window opens at midnight
+    }
+    // 'always': never restricted (must re-watch every time by design)
+  }
+
+  console.log('[RESTRICTIONS] mac=' + mac + ' ->', restrictions);
+  res.json({ restrictions });
+});
+
 // ── GET /api/client-mac ───────────────────────────────────────────────────
 router.get('/client-mac', async (req, res) => {
   const ip = getClientIp(req);
@@ -216,10 +269,20 @@ router.get('/whoami', async (req, res) => {
         console.log(`[WHOAMI] ✓ DB hit — mac=${mac} slug=${row.campaign_slug} expires=${row.expires_at}`);
         return res.json({ mac, slug: row.campaign_slug, active: true, expiresAt: toISO(row.expires_at) });
       }
-      console.log(`[WHOAMI] DB session expired at ${row.expires_at} — trying chilli fallback`);
-    } else {
-      console.log(`[WHOAMI] No DB granted session for mac=${mac} — trying chilli fallback`);
+      // DB session is expired — do NOT fall through to chilli pass check.
+      // Chilli can remain in 'pass' state for several minutes after DB expiry.
+      // Returning active:true here sends the user to /connecting where they are
+      // immediately bounced back, creating a 10-minute loop until chilli times out.
+      // The DB is authoritative: if it says expired, the session is over.
+      console.log(`[WHOAMI] DB session expired at ${row.expires_at} — returning inactive (chilli lag ignored)`);
+      db.close();
+      return res.json({ mac, slug: null, active: false });
     }
+
+    // No DB session at all — use chilli fallback for pre-portal or post-reboot devices.
+    // This handles devices that are in 'pass' state but have no portal session record
+    // (e.g. Pi rebooted after granting, wiping the DB, or admin granted via chilli directly).
+    console.log(`[WHOAMI] No DB granted session for mac=${mac} — checking chilli pass state`);
 
     // Tier 2: chilli fallback — device is in 'pass' state in chilli but
     // has no DB record (reboot, pre-portal session, etc.).
@@ -250,7 +313,7 @@ router.get('/whoami', async (req, res) => {
     db.close();
 
     const slug = campaign?.slug ?? null;
-    console.log(`[WHOAMI] ✓ Chilli fallback — mac=${mac} slug=${slug}`);
+    console.log(`[WHOAMI] ✓ Chilli fallback (no DB record) — mac=${mac} slug=${slug}`);
     res.json({ mac, slug, active: true, expiresAt: null });
 
   } catch (err) {

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { usePortal } from '../context/SessionContext';
-import { listCampaigns, CampaignSummary } from '../lib/api';
+import { listCampaigns, getRestrictions, RestrictionMap, CampaignSummary } from '../lib/api';
 import { IconSignal, IconClock, IconPlay, IconCheck, IconArrow } from '../components/layout/Shell';
 
 type Restriction = null | 'once_per_day' | 'once_ever';
@@ -153,31 +153,27 @@ export function PickerPage() {
   const [selected,         setSelected]         = useState<string | null>(null);
   const [loadingCampaigns, setLoadingCampaigns] = useState(true);
   const [starting,         setStarting]         = useState(false);
+  // DB-sourced per-campaign restrictions for this MAC. Decoupled from
+  // location.state so they survive page reload and CoovaChilli redirects.
+  const [apiRestrictions,  setApiRestrictions]  = useState<RestrictionMap>({});
 
   const getRestriction = (camp: CampaignSummary): Restriction => {
-    // ── Path 1: arrived from VideoPage with dismissedSlug in location.state ──
+    // ── Tier 1: DB-sourced restrictions (most reliable) ────────────────────
+    // Fetched fresh from /api/restrictions on mount. Survives page reload,
+    // CoovaChilli redirects, and back-navigation — unlike location.state which
+    // only exists when VideoPage explicitly navigated here.
+    if (apiRestrictions[camp.slug]) {
+      return apiRestrictions[camp.slug] as Restriction;
+    }
+
+    // ── Tier 2: VideoPage dismissal via location.state ─────────────────────
+    // Used as a fast/optimistic signal immediately after VideoPage navigates
+    // back here with dismissedSlug — before apiRestrictions has been refreshed.
     if (camp.slug === dismissedSlug) {
       if (dismissedFreq === 'once_per_day') return 'once_per_day';
       if (dismissedFreq === 'once_ever')    return 'once_ever';
       if (camp.watch_frequency === 'once_per_day') return 'once_per_day';
       if (camp.watch_frequency === 'once_ever')    return 'once_ever';
-    }
-
-    // ── Path 2: fresh page load / CoovaChilli redirect — no location.state ──
-    // Read restriction directly from the live /status response.
-    // Only apply this if we arrived WITHOUT a VideoPage dismissal — otherwise
-    // we rely exclusively on Path 1 above so reconnecting users are never
-    // incorrectly greyed out.
-    if (
-      !dismissedSlug &&
-      status &&
-      !status.active &&
-      status.campaignSlug === camp.slug &&
-      status.videoWatched
-    ) {
-      const freq = status.watchFrequency ?? camp.watch_frequency;
-      if (freq === 'once_per_day') return 'once_per_day';
-      if (freq === 'once_ever')    return 'once_ever';
     }
 
     return null;
@@ -199,6 +195,14 @@ export function PickerPage() {
       .finally(() => setLoadingCampaigns(false));
   }, []);
 
+  // Fetch per-campaign restrictions from the DB whenever the MAC is resolved.
+  // Runs on mount (if MAC came from URL params / sessionStorage) and again if
+  // whoAmI resolves the MAC later. Falls back to {} silently on error.
+  useEffect(() => {
+    if (!hotspot.mac && !hotspot.ip) return;
+    getRestrictions(hotspot.mac, hotspot.ip).then(setApiRestrictions);
+  }, [hotspot.mac]);
+
   useEffect(() => {
     if (selectedSlug && !status && !resolving && !loadingCampaigns) {
       refresh();
@@ -211,20 +215,10 @@ export function PickerPage() {
       navigate('/connecting', { replace: true });
       return;
     }
-    // If status has engagement data (videoWatched / surveyDone) but we arrived
-    // here WITHOUT a dismissedSlug in location.state, the user reconnected fresh
-    // (e.g. CoovaChilli redirect after session expiry). In that case the stale
-    // status must be cleared so getRestriction() doesn't grey out the campaign.
-    // We only keep status around when VideoPage explicitly navigated here with
-    // dismissedSlug — that's the only time we want to show the restriction UI.
-    if (!dismissedSlug && (status.videoWatched || status.surveyDone)) {
-      setStatus(null);
-      return;
-    }
-    // Clear truly empty sessions (no engagement yet) as before.
-    if (!status.videoWatched && !status.surveyDone) {
-      setStatus(null);
-    }
+    // Restrictions are now sourced from apiRestrictions (DB), not from status.
+    // Always clear status so PickerPage starts clean — restriction display is
+    // handled independently by getRestriction() via the API map.
+    setStatus(null);
   }, [status]);
 
   const selectedCamp     = campaigns.find(c => c.slug === selected);

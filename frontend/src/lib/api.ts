@@ -99,6 +99,21 @@ export const listCampaigns = () =>
 export const whoAmI = () =>
   req<WhoAmI>('/api/whoami');
 
+// Map of campaign slug → restriction type for the requesting MAC.
+// A slug absent from the map means the user is free to watch/re-watch.
+export type RestrictionMap = Record<string, 'once_per_day' | 'once_ever'>;
+
+// Fetches per-campaign restrictions for the current device from the DB.
+// Decoupled from location.state so it survives page reload / CoovaChilli redirect.
+export const getRestrictions = (mac: string | null, ip?: string | null): Promise<RestrictionMap> => {
+  const q = new URLSearchParams();
+  if (mac) q.set('mac', mac);
+  if (ip)  q.set('ip',  ip);
+  return req<{ restrictions: RestrictionMap }>(`/api/restrictions?${q.toString()}`)
+    .then(r => r.restrictions)
+    .catch(() => ({})); // non-fatal — degrade gracefully
+};
+
 export const portalApi = {
   status: (slug: string, hotspot?: Partial<HotspotParams>) => {
     const q = new URLSearchParams();
