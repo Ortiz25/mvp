@@ -524,6 +524,53 @@ router.post('/:slug/access/grant', async (req, res) => {
     });
   }
 
+  // ── Server-side watch_frequency enforcement ───────────────────────────────
+  // Prevents bypassing the PickerPage restriction UI by navigating to /watch
+  // directly, or by manipulating the frontend flow. The DB is the source of
+  // truth — check prior granted sessions for this MAC before issuing a new grant.
+  const freq = c.watch_frequency || 'once_per_day';
+  if (freq === 'once_ever' || freq === 'once_per_day') {
+    const { getDb } = require('../db/migrate');
+    const db2 = getDb();
+
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+
+    // Find any prior completed grant for this MAC on this campaign
+    // (excluding the current session, which has access_granted=0 still)
+    const prior = db2.prepare(`
+      SELECT granted_at FROM sessions
+      WHERE UPPER(REPLACE(mac_address, ':', '-')) = UPPER(REPLACE(?, ':', '-'))
+        AND campaign_id = ?
+        AND access_granted = 1
+        AND id != ?
+      ORDER BY granted_at DESC
+      LIMIT 1
+    `).get(mac, c.id, sessionId);
+    db2.close();
+
+    if (prior) {
+      if (freq === 'once_ever') {
+        console.warn(`[GRANT] Blocked once_ever repeat: mac=${mac} campaign=${c.slug}`);
+        return res.status(403).json({
+          error: 'You have already completed this campaign.',
+          restriction: 'once_ever',
+        });
+      }
+      if (freq === 'once_per_day') {
+        const grantDate = (prior.granted_at || '').slice(0, 10);
+        if (grantDate === today) {
+          console.warn(`[GRANT] Blocked once_per_day repeat: mac=${mac} campaign=${c.slug} granted_at=${prior.granted_at}`);
+          return res.status(403).json({
+            error: 'You have already used this campaign today. Come back tomorrow.',
+            restriction: 'once_per_day',
+          });
+        }
+      }
+    }
+  }
+
   const challenge = bodyChallenge || session.challenge || null;
 
   if (!challenge) {

@@ -56,8 +56,6 @@ export function SurveyPage() {
     setSubmitting(true);
     setError('');
     try {
-      // If challenge is missing (loginurl didn't include it), fetch a fresh one
-      // from chilli's UAM /newchal so the UAM logon can actually open internet.
       let challenge = hotspot.challenge;
       if (!challenge) {
         try {
@@ -73,8 +71,6 @@ export function SurveyPage() {
 
       await portalApi.grantAccess(selectedSlug, status.sessionId, challenge);
 
-      // Clear challenge from sessionStorage — it's one-time use.
-      // Do this BEFORE navigating so returning visits don't find a stale challenge.
       try {
         const SS_KEY = 'cp_hotspot_v3';
         const stored = sessionStorage.getItem(SS_KEY);
@@ -85,16 +81,21 @@ export function SurveyPage() {
         }
       } catch {}
 
-      // Do NOT call refresh() here. refresh() calls /status → getOrCreateSession(),
-      // which for watch_frequency='always' campaigns sees access_granted=1 and creates
-      // a brand-new session with access_granted=0 — causing ConnectingPage to
-      // immediately bounce back to the picker.
-      // ConnectingPage's bootstrap will call refresh() once, after the backend has
-      // committed the grant, and will get accessGranted=true correctly.
       navigate('/connecting', { replace: true });
     } catch (e) {
       setSubmitting(false);
-      setError(e instanceof Error ? e.message : 'Failed to grant access');
+      // Server rejected grant due to watch_frequency restriction —
+      // navigate back to picker so the grayed-out card is shown correctly.
+      const msg = e instanceof Error ? e.message : '';
+      if (msg.includes('already') || msg.includes('tomorrow')) {
+        const freq = status?.watchFrequency ?? 'once_per_day';
+        navigate('/', { replace: true, state: {
+          dismissedSlug: selectedSlug,
+          dismissedFreq: freq,
+        }});
+        return;
+      }
+      setError(msg || 'Failed to grant access');
     }
   };
 

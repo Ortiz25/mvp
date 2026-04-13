@@ -193,7 +193,18 @@ export function VideoPage() {
     } catch (e) {
       completedThisVisit.current = false; // reset so user can retry
       setSubmitting(false);
-      setError(e instanceof Error ? e.message : 'Failed — try again');
+      const msg = e instanceof Error ? e.message : 'Failed — try again';
+      // Server rejected grant due to watch_frequency restriction —
+      // navigate back to picker so the grayed-out card is shown.
+      if (msg.includes('already') || msg.includes('tomorrow')) {
+        const freq = status?.watchFrequency ?? 'once_per_day';
+        navigate('/', { replace: true, state: {
+          dismissedSlug: selectedSlug,
+          dismissedFreq: freq,
+        }});
+        return;
+      }
+      setError(msg);
     }
   }, [canContinue, status, selectedSlug, submitting, config, hotspot]);
 
