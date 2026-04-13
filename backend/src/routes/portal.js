@@ -169,7 +169,12 @@ router.get('/restrictions', async (req, res) => {
   if (!mac) return res.json({ restrictions: {} });
 
   const db = getDb();
-  // Most-recent granted session per campaign for this MAC
+  // Find the most-recent session per campaign for this MAC that was actually
+  // granted (granted_at IS NOT NULL). We deliberately do NOT filter on
+  // access_granted=1 because cleanupExpiredSessions() sets access_granted=0
+  // after revoking — once revoked, access_granted is always 0, but granted_at
+  // remains as a permanent record that the grant happened. Using granted_at
+  // as the signal means restrictions survive the cleanup cycle correctly.
   const rows = db.prepare(`
     SELECT s.campaign_id, c.slug, c.watch_frequency,
            s.video_watched, s.survey_done, s.access_granted,
@@ -177,9 +182,9 @@ router.get('/restrictions', async (req, res) => {
     FROM sessions s
     JOIN campaigns c ON c.id = s.campaign_id
     WHERE UPPER(REPLACE(s.mac_address, ':', '-')) = UPPER(REPLACE(?, ':', '-'))
-      AND s.access_granted = 1
+      AND s.granted_at IS NOT NULL
     GROUP BY s.campaign_id
-    HAVING s.created_at = MAX(s.created_at)
+    HAVING s.granted_at = MAX(s.granted_at)
   `).all(mac);
   db.close();
 
@@ -537,13 +542,17 @@ router.post('/:slug/access/grant', async (req, res) => {
     const pad = n => String(n).padStart(2, '0');
     const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 
-    // Find any prior completed grant for this MAC on this campaign
-    // (excluding the current session, which has access_granted=0 still)
+    // Find the most recent prior grant for this MAC on this campaign.
+    // Filter by granted_at IS NOT NULL rather than access_granted=1 because
+    // cleanupExpiredSessions() zeroes access_granted after revoking — sessions
+    // that were granted but have since expired will have access_granted=0 but
+    // granted_at still set. That permanent timestamp is the correct signal.
+    // Exclude the current session (which has granted_at=NULL, not yet granted).
     const prior = db2.prepare(`
       SELECT granted_at FROM sessions
       WHERE UPPER(REPLACE(mac_address, ':', '-')) = UPPER(REPLACE(?, ':', '-'))
         AND campaign_id = ?
-        AND access_granted = 1
+        AND granted_at  IS NOT NULL
         AND id != ?
       ORDER BY granted_at DESC
       LIMIT 1

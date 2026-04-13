@@ -185,26 +185,51 @@ export function PickerPage() {
     setLoadingCampaigns(true);
     setCampaignError(false);
     listCampaigns()
-      .then(c => {
-        setCampaigns(c);
-        // Auto-select: prefer first unrestricted campaign, skip dismissed ones
-        const free = c.filter(camp => camp.slug !== dismissedSlug);
-        if (free.length === 1)   setSelected(free[0].slug);
-        else if (c.length === 1) setSelected(c[0].slug);
-      })
+      .then(c => { setCampaigns(c); })
       .catch(() => setCampaignError(true))
       .finally(() => setLoadingCampaigns(false));
-  }, [dismissedSlug]);
+  }, []);
+
+  // Auto-select: runs after BOTH campaigns and restrictions are loaded so we
+  // never auto-select a restricted campaign. Depends on campaigns + apiRestrictions.
+  useEffect(() => {
+    if (loadingCampaigns || campaigns.length === 0) return;
+    if (selected) return; // user already made a choice
+    const free = campaigns.filter(c => !getRestriction(c) && c.slug !== dismissedSlug);
+    if (free.length === 1)        setSelected(free[0].slug);
+    else if (campaigns.length === 1) setSelected(campaigns[0].slug);
+  }, [campaigns, apiRestrictions, loadingCampaigns]);
 
   useEffect(() => { loadCampaigns(); }, []);
 
   // Fetch per-campaign restrictions from the DB whenever the MAC is resolved.
-  // Runs on mount (if MAC came from URL params / sessionStorage) and again if
-  // whoAmI resolves the MAC later. Falls back to {} silently on error.
+  // Retries every 3 seconds if no MAC is available yet — this covers the window
+  // after CoovaChilli deauthorizes a device: the device briefly loses its MAC
+  // in the ARP/chilli table before the new redirect arrives with fresh params.
+  // Once a non-empty restriction map comes back the interval stops.
   useEffect(() => {
-    if (!hotspot.mac && !hotspot.ip) return;
-    getRestrictions(hotspot.mac, hotspot.ip).then(setApiRestrictions);
-  }, [hotspot.mac]);
+    // Immediate fetch if we already have a MAC
+    if (hotspot.mac || hotspot.ip) {
+      getRestrictions(hotspot.mac, hotspot.ip).then(r => {
+        setApiRestrictions(r);
+      });
+    }
+
+    // Poll until MAC resolves and restrictions load
+    const interval = setInterval(() => {
+      const mac = hotspot.mac;
+      const ip  = hotspot.ip;
+      if (!mac && !ip) return; // still no identity — keep waiting
+      getRestrictions(mac, ip).then(r => {
+        setApiRestrictions(r);
+        // Once we have a definitive answer (even empty {}) we can stop polling.
+        // Empty {} is valid — it means no restrictions for this MAC today.
+        clearInterval(interval);
+      }).catch(() => {}); // keep retrying on error
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [hotspot.mac, hotspot.ip]);
 
   useEffect(() => {
     if (selectedSlug && !status && !resolving && !loadingCampaigns) {
