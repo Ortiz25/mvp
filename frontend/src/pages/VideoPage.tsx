@@ -79,12 +79,13 @@ export function VideoPage() {
         return;
       }
 
-      // once_per_day: video_watched=true means they already used today's session.
-      // Navigate back to picker with restriction info so the card is greyed out.
-      navigate('/', { replace: true, state: {
-        dismissedSlug: selectedSlug,
-        dismissedFreq: freq,   // 'once_per_day' — card shows "come back tomorrow"
-      }});
+      // once_per_day: videoWatched=true on an active/newly-created session means
+      // the user completed today's engagement. PickerPage now handles the
+      // "come back tomorrow" restriction display via /api/restrictions, so there
+      // is no need to bounce back here. The user shouldn't reach /watch for a
+      // restricted campaign — but if they somehow do (back button, direct URL),
+      // let them re-watch. The grant attempt will be gated server-side.
+      // (no navigate — fall through to render the video)
     }
   }, [loading, status, config]);
 

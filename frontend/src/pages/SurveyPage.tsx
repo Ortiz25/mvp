@@ -40,15 +40,10 @@ export function SurveyPage() {
       doGrant();
       return;
     }
-    // once_per_day: surveyDone=true means today's quota is used.
-    // Send back to picker — the greyed-out card will explain the restriction.
-    if (status?.surveyDone && status?.watchFrequency === 'once_per_day') {
-      navigate('/', { replace: true, state: {
-        dismissedSlug: selectedSlug,
-        dismissedFreq: 'once_per_day',
-      }});
-      return;
-    }
+    // once_per_day with surveyDone=true: this session's engagement is complete.
+    // PickerPage handles the "come back tomorrow" restriction via /api/restrictions.
+    // Don't bounce here — just proceed to grant so the user gets their access.
+    // (The restriction will be shown correctly on the NEXT visit to PickerPage.)
 
     // Auto-grant if no survey questions (survey enabled but empty)
     if (!config.survey?.questions?.length) {

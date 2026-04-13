@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { usePortal } from '../context/SessionContext';
 import { listCampaigns, getRestrictions, RestrictionMap, CampaignSummary } from '../lib/api';
@@ -179,21 +179,24 @@ export function PickerPage() {
     return null;
   };
 
-  useEffect(() => {
+  const [campaignError,    setCampaignError]    = useState(false);
+
+  const loadCampaigns = useCallback(() => {
+    setLoadingCampaigns(true);
+    setCampaignError(false);
     listCampaigns()
       .then(c => {
         setCampaigns(c);
-        // Auto-select first unrestricted campaign when only one is available
-        const free = c.filter(camp => {
-          if (camp.slug !== dismissedSlug) return true;
-          return false;
-        });
+        // Auto-select: prefer first unrestricted campaign, skip dismissed ones
+        const free = c.filter(camp => camp.slug !== dismissedSlug);
         if (free.length === 1)   setSelected(free[0].slug);
         else if (c.length === 1) setSelected(c[0].slug);
       })
-      .catch(() => {})
+      .catch(() => setCampaignError(true))
       .finally(() => setLoadingCampaigns(false));
-  }, []);
+  }, [dismissedSlug]);
+
+  useEffect(() => { loadCampaigns(); }, []);
 
   // Fetch per-campaign restrictions from the DB whenever the MAC is resolved.
   // Runs on mount (if MAC came from URL params / sessionStorage) and again if
@@ -273,6 +276,17 @@ export function PickerPage() {
       {loadingCampaigns ? (
         <div className="flex items-center justify-center py-12">
           <div className="w-7 h-7 rounded-full border-2 border-signal/30 border-t-signal animate-spin" />
+        </div>
+      ) : campaignError ? (
+        <div className="text-center py-12 flex flex-col items-center gap-4">
+          <p className="text-white/30 font-body text-sm">Could not load campaigns.</p>
+          <button
+            onClick={loadCampaigns}
+            className="text-[11px] font-display font-bold text-signal/70 hover:text-signal
+              transition-colors uppercase tracking-wider px-4 py-2 rounded-lg
+              border border-signal/20 hover:border-signal/40">
+            ↺ Retry
+          </button>
         </div>
       ) : campaigns.length === 0 ? (
         <div className="text-center py-12">
