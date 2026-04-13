@@ -119,7 +119,10 @@ export function VideoPage() {
     };
   }, [selectedSlug, status?.sessionId]); // intentionally not including watchedPct — using ref
 
-  // ── Progress heartbeat every 5 s ──────────────────────────────────────────
+  // ── Progress heartbeat every 2 s ──────────────────────────────────────────
+  // Reduced from 5s to 2s. On Android native WebView the beacon is unreliable
+  // so the last heartbeat position is what becomes drop_pct when the stale
+  // sweep runs. A 2s interval limits the position error to ≤2s of watch time.
   useEffect(() => {
     if (!selectedSlug || !status?.sessionId) return;
     const sessionId = status.sessionId;
@@ -128,7 +131,7 @@ export function VideoPage() {
       if (pct > 0.01 && !completedThisVisit.current) {
         portalApi.videoProgress(selectedSlug, sessionId, pct).catch(() => {});
       }
-    }, 5000);
+    }, 2000);
     return () => clearInterval(id);
   }, [selectedSlug, status?.sessionId]);
 
@@ -170,6 +173,13 @@ export function VideoPage() {
       }
 
       // ── No-survey: grant access here ──────────────────────────────────────
+      // Flush final position to DB before grant. On Android native WebView the
+      // system closes the portal window the moment internet is granted — if the
+      // grant response races with the WebView destruction, completedThisVisit
+      // may not be set in time to suppress the drop-off beacon. Writing the
+      // final position here ensures the DB reflects completed=true before close.
+      await portalApi.videoComplete(selectedSlug, status.sessionId, watchedPctRef.current).catch(() => {});
+
       let challenge = hotspot.challenge;
       if (!challenge) {
         try {

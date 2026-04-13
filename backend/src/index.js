@@ -26,14 +26,20 @@ migrate();
 deactivateExpiredCampaigns();
 sweepStaleVideoProgress(); // classify any views abandoned before last restart
 
+// Every 30 seconds: sweep stale video_progress rows.
+// Threshold inside sweepStaleVideoProgress is 2 minutes — running the sweep
+// every 30s ensures Android native WebView drop-offs (no beacon, no pagehide)
+// are recorded within ~2.5 minutes of the user closing the portal window.
+setInterval(() => {
+  sweepStaleVideoProgress();
+}, 30 * 1000);
+
 // Every 60 seconds:
 //   1. Auto-deactivate campaigns whose end_date has passed
 //   2. Revoke expired client sessions from chilli + RADIUS DB
-//   3. Mark video_progress rows with no heartbeat for >10 min as drop-offs
 setInterval(async () => {
   deactivateExpiredCampaigns();
   await cleanupExpiredSessions();
-  sweepStaleVideoProgress();
 }, 60 * 1000);
 
 const app = express();

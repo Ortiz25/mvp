@@ -209,6 +209,24 @@ function getOrCreateSession(ip, campaignId, mac = null, dst = null, challenge = 
       // (carryVideo and carrySurvey stay false)
       const vw = carryVideo  ? 1 : 0;
       const sd = carrySurvey ? 1 : 0;
+
+      // ── Mark prior incomplete video view as a drop-off immediately ────────
+      // On Android native WebView the portal window is destroyed on close,
+      // so beforeunload/pagehide/visibilitychange are unreliable and the
+      // sendBeacon never fires. The reconnect that triggers needsNewSession
+      // is the most reliable drop-off signal we have on Android.
+      // This closes the prior video_progress row immediately rather than
+      // waiting up to 2 minutes for the stale sweep to catch it.
+      db.prepare(`
+        UPDATE video_progress
+        SET dropped_off = 1,
+            drop_pct    = last_pct,
+            updated_at  = datetime('now')
+        WHERE session_id = ?
+          AND completed  = 0
+          AND dropped_off = 0
+      `).run(existing.id);
+
       console.log(`[SESSION] Frequency=${watchFrequency} reset for mac=${mac} — new session (video=${vw} survey=${sd})`);
       const id = uuidv4();
       db.prepare(
@@ -446,15 +464,21 @@ function getVideoDropOffStats(campaignId = null) {
 
 // ── Sweep stale "still watching" rows ────────────────────────────────────
 // Any video_progress row that is not completed and not already marked as
-// a drop-off, but hasn't received a heartbeat in >10 minutes, is almost
+// a drop-off, but hasn't received a heartbeat in >2 minutes, is almost
 // certainly an abandoned view. Mark it as a drop-off at its last known position.
+//
+// Threshold is 2 minutes (down from 10) to handle Android native captive portal
+// WebView: closing the portal window does not reliably fire beforeunload /
+// pagehide / visibilitychange, so the sendBeacon never executes.
+// The 2s heartbeat is the primary signal on Android — 2 minutes gives enough
+// margin for temporary connection drops without generating false positives.
 function sweepStaleVideoProgress() {
   const db = getDb();
   const stale = db.prepare(`
     SELECT id, last_pct FROM video_progress
     WHERE completed   = 0
       AND dropped_off = 0
-      AND updated_at  < datetime('now', '-10 minutes')
+      AND updated_at  < datetime('now', '-2 minutes')
   `).all();
   const update = db.prepare(`
     UPDATE video_progress
