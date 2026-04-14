@@ -9,13 +9,13 @@ type EngagementStats = {
     completed:          number;
     dropped_off:        number;
     still_watching:     number;
-    bounce_count:       number;
+    bounce_count?:       number;
     avg_watch_pct:      number | null;
     avg_completion_pct: number | null;
     avg_drop_pct:       number | null;
     completion_rate:    number | null;
     drop_rate:          number | null;
-    bounce_rate:        number | null;
+    bounce_rate?:        number | null;
   };
   trend: Array<{ day: string; views: number; completed: number; dropped: number }>;
   dropBuckets:       Array<{ bucket: string; count: number }>;
