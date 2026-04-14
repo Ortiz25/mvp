@@ -5,7 +5,8 @@ import { Login }           from './pages/Login';
 import { AdminShell }      from './components/layout/AdminShell';
 import { Overview }        from './pages/Overview';
 import { CampaignManager } from './pages/CampaignManager';
-import { Sessions, Analytics } from './pages/Sessions';
+import { Sessions }  from './pages/Sessions';
+import { Analytics } from './pages/Analytics';
 
 export default function App() {
   const [authed, setAuthed] = useState(false);
