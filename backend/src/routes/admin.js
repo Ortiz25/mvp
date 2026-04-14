@@ -6,7 +6,7 @@ const path    = require('path');
 const fs      = require('fs');
 
 const { getDb }  = require('../db/migrate');
-const { buildLogoutUrl, testConnection, listAuthorizedClients } = require('../lib/radius');
+const { revokeAccess, testConnection, listAuthorizedClients } = require('../lib/radius');
 const {
   getAllSessions, getStats, getSurveyAggregates, revokeSession, getSession,
   getVideoDropOffStats, getVideoEngagementStats,
@@ -144,11 +144,29 @@ router.delete('/sessions/:id', async (req, res) => {
   const s = getSession(req.params.id);
   if (!s) return res.status(404).json({ error: 'Not found' });
 
-  // Build MikroTik logout URL (informational — actual revoke is browser-side)
-  const { url: logoutUrl } = buildLogoutUrl(s.mac_address);
-  revokeSession(req.params.id);
+  // ── Revoke from CoovaChilli + RADIUS immediately ──────────────────────
+  // Previously this only updated the DB (revokeSession) without touching
+  // chilli or RADIUS, leaving the user's internet open at the network level.
+  // Now we call revokeAccess() — the same function cleanupExpiredSessions
+  // uses — so the MAC is deauthorized from chilli and removed from RADIUS
+  // radcheck/radreply tables right away.
+  if (s.mac_address) {
+    try {
+      await revokeAccess(s.mac_address);
+      console.log(`[ADMIN REVOKE] ✅ Network access cut for ${s.mac_address}`);
+    } catch (err) {
+      // Log but don't fail the request — the DB revoke still needs to happen
+      // so the session doesn't get re-processed by cleanupExpiredSessions.
+      console.error(`[ADMIN REVOKE] ⚠ chilli/RADIUS revoke failed for ${s.mac_address}:`, err.message);
+    }
+  }
 
-  res.json({ success: true, logoutUrl, note: 'Session revoked in DB. Visit logoutUrl to revoke on router.' });
+  // Mark revoked in DB — preserves expires_at so the Sessions dashboard
+  // can show the correct expiry time and distinguish revoked sessions from
+  // ones that were never granted (Pending).
+  revokeSession(s.id);
+
+  res.json({ success: true });
 });
 
 // ── Video drop-off analytics ───────────────────────────────────────────────

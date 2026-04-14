@@ -52,8 +52,12 @@ export interface Survey {
 
 export interface Session {
   id: string; campaign_id: string | null; campaign_name: string | null;
+  campaign_slug: string | null;
   mac_address: string | null; ip_address: string; dst_url: string | null;
   video_watched: boolean; survey_done: boolean; access_granted: boolean;
+  // granted_at: set when access was first granted. Preserved even after expiry/revoke.
+  // expires_at: set at grant time, preserved after cleanup (not nulled).
+  //   Use these two fields + access_granted to derive true session status.
   granted_at: string | null; expires_at: string | null; created_at: string;
 }
 
@@ -72,9 +76,7 @@ export interface HotspotClient {
 }
 
 export interface RevokeResult {
-  success:   boolean;
-  logoutUrl: string;
-  note:      string;
+  success: boolean;
 }
 
 // ── API ────────────────────────────────────────────────────────────────────

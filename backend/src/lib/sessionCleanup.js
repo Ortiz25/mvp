@@ -10,6 +10,13 @@
  * CoovaChilli enforces Session-Timeout at the network layer independently —
  * this job reconciles the SQLite DB and calls chilli_query deauthorize as
  * belt-and-suspenders.
+ *
+ * IMPORTANT: expires_at is intentionally preserved after revocation.
+ * Setting it to NULL was the original behaviour, but it caused sessions to
+ * show as "Pending" in the admin dashboard after cleanup — indistinguishable
+ * from sessions that were never granted. We now keep expires_at intact and
+ * use access_granted=0 + granted_at IS NOT NULL to mean "was active, now
+ * expired". The Sessions page uses granted_at to determine true status.
  */
 
 const { revokeAccess } = require('./radius');
@@ -54,7 +61,7 @@ async function cleanupExpiredSessions() {
     const now = nowLocal();
 
     const expired = db.prepare(`
-      SELECT mac_address, expires_at FROM sessions
+      SELECT id, mac_address, expires_at FROM sessions
       WHERE access_granted = 1
         AND expires_at IS NOT NULL
         AND expires_at < ?
@@ -68,11 +75,15 @@ async function cleanupExpiredSessions() {
     for (const row of expired) {
       try {
         await revokeAccess(row.mac_address);
+        // Preserve expires_at so the Sessions dashboard can show the correct
+        // expiry time and distinguish "Expired" from "Pending (never granted)".
+        // Only access_granted is zeroed — expires_at stays as a historical record.
         db.prepare(`
           UPDATE sessions
-          SET access_granted = 0, expires_at = NULL, updated_at = ?
-          WHERE mac_address = ? AND access_granted = 1
-        `).run(now, row.mac_address);
+          SET access_granted = 0,
+              updated_at     = ?
+          WHERE id = ?
+        `).run(now, row.id);
         console.log(`[CLEANUP] ✅ Revoked: ${row.mac_address}`);
       } catch (err) {
         console.error(`[CLEANUP] Failed: ${row.mac_address}`, err.message);

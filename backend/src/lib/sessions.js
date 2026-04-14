@@ -495,7 +495,9 @@ function sweepStaleVideoProgress() {
 
 function revokeSession(id) {
   const db = getDb();
-  db.prepare(`UPDATE sessions SET access_granted=0, expires_at=NULL, updated_at=datetime('now') WHERE id=?`).run(id);
+  // Preserve expires_at so the Sessions dashboard can distinguish a revoked/expired
+  // session from a Pending one (never granted). Only access_granted is zeroed.
+  db.prepare(`UPDATE sessions SET access_granted=0, updated_at=datetime('now') WHERE id=?`).run(id);
   db.close();
 }
 
