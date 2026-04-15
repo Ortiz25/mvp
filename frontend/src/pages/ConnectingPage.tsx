@@ -238,12 +238,20 @@ export function ConnectingPage() {
         )}
       </div>
 
-      <a href="https://google.com"
+      <button
+  onClick={() => {
+    window.open('http://clients3.google.com/generate_204', '_blank');
+
+    setTimeout(() => {
+      window.location.href = 'https://google.com';
+    }, 1500);
+  }}
+
         className="w-full py-4 rounded-xl font-display font-bold text-base text-center
           bg-gradient-to-r from-signal to-aqua text-void shadow-md
           active:scale-[0.98] transition-transform duration-150 no-underline block">
         Start Browsing →
-      </a>
+      </button>
 
       {/* Safety net — lets users go back to pick a different campaign */}
       <button
