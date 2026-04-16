@@ -46,6 +46,18 @@ const APPS: App[] = [
     featured: true,
   },
   {
+    id: 'moodle',
+    name: 'Moodle',
+    tagline: 'Courses & Certificates',
+    desc: 'Take structured courses, complete quizzes, and earn certificates — all offline.',
+    url: 'http://moodle.lan',
+    Icon: IconBook,          // reuse or import a suitable icon
+    category: 'education',
+    accent: 'amber',         // pick any accent from the existing ACCENT map
+    available: true,
+    featured: true,
+  },
+  {
     id: 'community',
     name: 'Community Board',
     tagline: 'Local notices & events',

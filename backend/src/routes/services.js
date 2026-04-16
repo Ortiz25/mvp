@@ -6,6 +6,7 @@ const router  = express.Router();
 const SERVICES = [
   { id: 'kolibri',   url: 'http://127.0.0.1:8080', name: 'Kolibri' },
   { id: 'kiwix',     url: 'http://127.0.0.1:8081', name: 'Kiwix' },
+  { id: 'moodle', url: 'http://127.0.0.1:80', name: 'Moodle', host: 'moodle.lan' }
 ];
 
 function checkService(url) {

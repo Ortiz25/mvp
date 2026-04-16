@@ -19,6 +19,17 @@ const resources = [
     topics: ['History','Science','Geography','Culture'],
   },
   {
+    name: 'Moodle',
+    tagline: 'Structured Courses & Quizzes',
+    emoji: '🎓',
+    desc: 'Take courses, complete assessments and track your learning progress.',
+    url: 'http://moodle.lan',
+    badge: 'Offline · Free',
+    color: 'border-amber-500/20 bg-amber-500/5',
+    accent: 'text-amber-400',
+    topics: ['Courses', 'Quizzes', 'Certificates', 'Skills'],
+  },
+  {
     name: 'Community Board', tagline: 'Local Notices & News', emoji: '📌',
     desc: 'Stay updated with community announcements, events, and local services.',
     url: '#', badge: 'Local',
