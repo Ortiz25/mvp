@@ -8,12 +8,53 @@ const OFFLINE_APPS = [
   { name: 'Kolibri',   desc: 'Learning platform',    url: 'http://kolibri.lan', Icon: IconBook  },
 ];
 
+// Notify CoovaChilli UAM that the user is logged in.
+// CoovaChilli's /loggedin endpoint is a browser-facing URL that chilli
+// serves itself. It requires no parameters — the client IP is enough for
+// chilli to look up the session and mark it as "shown loggedin page".
+// We also try a connectivity probe to detect when iptables has opened.
+async function notifyChilliLoggedin(): Promise<void> {
+  try {
+    // Hit CoovaChilli's own UAM loggedin page — this confirms to chilli
+    // that the browser received the post-auth page. no-cors is correct here.
+    await fetch('http://192.168.182.1:3990/loggedin', {
+      mode: 'no-cors', cache: 'no-cache',
+    });
+  } catch {
+    // Expected to fail in some network configurations — not fatal.
+  }
+}
+
+// Probe for actual internet connectivity by fetching a known reliable URL.
+// Returns true once the network is open, or false after maxAttempts.
+async function waitForConnectivity(maxAttempts = 8, delayMs = 700): Promise<boolean> {
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      // Google's generate_204 endpoint returns 204 No Content when reachable.
+      // We use no-cors so we don't need CORS headers — if the fetch resolves
+      // without a network error, the route is open.
+      await fetch('http://connectivitycheck.gstatic.com/generate_204', {
+        mode: 'no-cors', cache: 'no-cache',
+        signal: AbortSignal.timeout(3000),
+      });
+      return true; // network is open
+    } catch {
+      if (i < maxAttempts - 1) {
+        await new Promise(r => setTimeout(r, delayMs));
+      }
+    }
+  }
+  return false;
+}
+
 export function ConnectingPage() {
   const { status, config, refresh, selectedSlug, resolving, loading, setStatus } = usePortal();
-  const navigate      = useNavigate();
-  const loggedinFired = useRef(false);
-  const refreshFired  = useRef(false);
-  const [grantError,  setGrantError] = useState(false);
+  const navigate        = useNavigate();
+  const loggedinFired   = useRef(false);
+  const refreshFired    = useRef(false);
+  const [grantError,    setGrantError]    = useState(false);
+  const [browsing,      setBrowsing]      = useState(false);   // waiting for connectivity
+  const [connectFailed, setConnectFailed] = useState(false);   // gave up waiting
 
   const sessionHours = config?.campaign?.sessionHours ?? 1;
   const expiresAt = status?.expiresAt ?? (
@@ -73,24 +114,25 @@ export function ConnectingPage() {
       setTl(next);
       if (next.expired) {
         clearInterval(id);
-        // Clear status from context so PickerPage doesn't see stale
-        // accessGranted=true and redirect back here
         setStatus(null);
-        navigate('/', { replace: true });
+        // Pass sessionExpired so PickerPage bypasses once_per_day restrictions
+        // for the current day — the session just ended naturally, the user
+        // should be able to see campaigns and re-enter the flow.
+        navigate('/', { replace: true, state: { sessionExpired: true } });
       }
     }, 1000);
     return () => clearInterval(id);
   }, [expiresAt, sessionHours]);
 
-  // ── Fire CoovaChilli loggedin once ────────────────────────────────────
+  // ── Fire CoovaChilli loggedin notification once ───────────────────────
+  // This tells chilli's UAM server that the client has seen the post-auth
+  // page. It's a best-effort fire-and-forget — the actual iptables grant
+  // already happened server-side during the /access/grant call via UAM logon.
   useEffect(() => {
     if (loggedinFired.current) return;
     loggedinFired.current = true;
-    setTimeout(() => {
-      fetch('http://192.168.182.1:3990/loggedin', {
-        mode: 'no-cors', cache: 'no-cache',
-      }).catch(() => {});
-    }, 800);
+    // Small delay to let the backend grant propagate to chilli's iptables.
+    setTimeout(() => { notifyChilliLoggedin(); }, 600);
   }, []);
 
   const fmt2 = (n: number) => String(n).padStart(2, '0');
@@ -238,15 +280,35 @@ export function ConnectingPage() {
         )}
       </div>
 
-      <a
-  href="https://google.com" 
-  target="_blank" 
-  rel="noopener noreferrer"
-        className="w-full py-4 rounded-xl font-display font-bold text-base text-center
+      <button
+        disabled={browsing}
+        onClick={async () => {
+          setConnectFailed(false);
+          setBrowsing(true);
+          const online = await waitForConnectivity();
+          setBrowsing(false);
+          if (online) {
+            window.open('https://google.com', '_blank', 'noopener,noreferrer');
+          } else {
+            // Couldn't confirm connectivity — let user retry or go anyway
+            setConnectFailed(true);
+          }
+        }}
+        className={`w-full py-4 rounded-xl font-display font-bold text-base text-center
           bg-gradient-to-r from-signal to-aqua text-void shadow-md
-          active:scale-[0.98] transition-transform duration-150 no-underline block">
-        Start Browsing →
-      </a>
+          active:scale-[0.98] transition-all duration-150
+          disabled:opacity-60 disabled:cursor-wait`}>
+        {browsing ? (
+          <span className="flex items-center justify-center gap-2">
+            <span className="w-4 h-4 rounded-full border-2 border-void/40 border-t-void animate-spin inline-block"/>
+            Connecting…
+          </span>
+        ) : connectFailed ? (
+          <span>⚠ Not online yet — tap to try again</span>
+        ) : (
+          'Start Browsing →'
+        )}
+      </button>
 
       {/* Safety net — lets users go back to pick a different campaign */}
       <button

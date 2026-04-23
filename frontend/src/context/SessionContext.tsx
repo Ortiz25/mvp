@@ -94,8 +94,14 @@ function readHotspotParams(): HotspotParams {
 
   if (mac || challenge) {
     // Fresh URL params from CoovaChilli redirect — always take priority.
-    // This handles the case where a previous session cleared the challenge
-    // from sessionStorage and CoovaChilli is now redirecting with a new one.
+    // If a challenge is present this is a brand-new redirect (reconnect or
+    // first visit). Clear any stale MAC/session from a previous session so
+    // the restrictions endpoint doesn't return old once_per_day entries for
+    // the wrong (or same) MAC and blank out the campaign picker.
+    if (challenge) {
+      try { sessionStorage.removeItem(SS_KEY); } catch {}
+      _cached = null;
+    }
     const params: HotspotParams = { mac, ip, dst, challenge, chilliSid };
     _cached = params;
     try { sessionStorage.setItem(SS_KEY, JSON.stringify(params)); } catch {}

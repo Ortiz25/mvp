@@ -146,8 +146,13 @@ export function PickerPage() {
 
   // dismissedSlug + dismissedFreq come from VideoPage when content is exhausted.
   // We render the card as restricted instead of hiding it.
-  const dismissedSlug: string | null = (location.state as any)?.dismissedSlug ?? null;
-  const dismissedFreq: string | null = (location.state as any)?.dismissedFreq ?? null;
+  const dismissedSlug:    string | null  = (location.state as any)?.dismissedSlug  ?? null;
+  const dismissedFreq:    string | null  = (location.state as any)?.dismissedFreq  ?? null;
+  // sessionExpired is set by ConnectingPage when the countdown hits zero.
+  // In this case the user's session ended naturally — we bypass once_per_day
+  // restrictions so campaigns are visible and they can re-enter the flow
+  // (re-watch video / go straight to grant depending on watch_frequency).
+  const sessionExpired:   boolean        = !!((location.state as any)?.sessionExpired);
 
   const [campaigns,        setCampaigns]        = useState<CampaignSummary[]>([]);
   const [selected,         setSelected]         = useState<string | null>(null);
@@ -158,6 +163,11 @@ export function PickerPage() {
   const [apiRestrictions,  setApiRestrictions]  = useState<RestrictionMap>({});
 
   const getRestriction = (camp: CampaignSummary): Restriction => {
+    // When the user's session just ended (timer hit zero), always show campaigns
+    // as available so they can re-enter the flow. once_ever is still enforced.
+    if (sessionExpired && apiRestrictions[camp.slug] === 'once_per_day') return null;
+    if (sessionExpired && camp.watch_frequency === 'once_per_day' && camp.slug === dismissedSlug) return null;
+
     // ── Tier 1: DB-sourced restrictions (most reliable) ────────────────────
     // Fetched fresh from /api/restrictions on mount. Survives page reload,
     // CoovaChilli redirects, and back-navigation — unlike location.state which
