@@ -27,7 +27,7 @@ export function SurveyPage() {
 
     // Wait for config before making any routing decisions that depend on
     // requireVideo — if we default to true while config is still loading,
-    // survey-only campaigns get wrongly bounced to /watch.
+
     if (!config) return;
 
     const requireVideo = config.campaign?.requireVideo ?? status?.requireVideo ?? true;
