@@ -145,7 +145,7 @@ export function PickerPage() {
   const location = useLocation();
 
   // dismissedSlug + dismissedFreq come from VideoPage when content is exhausted.
-  
+  // We render the card as restricted instead of hiding it.
   const dismissedSlug:    string | null  = (location.state as any)?.dismissedSlug  ?? null;
   const dismissedFreq:    string | null  = (location.state as any)?.dismissedFreq  ?? null;
   // sessionExpired is set by ConnectingPage when the countdown hits zero.
