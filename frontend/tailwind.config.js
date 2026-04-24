@@ -24,6 +24,7 @@ export default {
         'ping-slow':  'ping 2s cubic-bezier(0,0,0.2,1) infinite',
         'pulse-soft': 'pulse 2.5s ease-in-out infinite',
         'scan':       'scan 3s linear infinite',
+        '[shimmer_3s_ease-in-out_infinite]': 'shimmer 3s ease-in-out infinite',
       },
       keyframes: {
         fadeUp:  { '0%': { opacity:'0', transform:'translateY(14px)' }, '100%': { opacity:'1', transform:'translateY(0)' } },
@@ -31,6 +32,10 @@ export default {
         slideUp: { '0%': { opacity:'0', transform:'translateY(24px)' }, '100%': { opacity:'1', transform:'translateY(0)' } },
         pop:     { '0%': { opacity:'0', transform:'scale(0.85)' }, '100%': { opacity:'1', transform:'scale(1)' } },
         scan:    { '0%': { transform:'translateY(-100%)' }, '100%': { transform:'translateY(400%)' } },
+        shimmer: {
+  '0%':   { transform: 'translateX(-100%)' },
+  '60%, 100%': { transform: 'translateX(200%)' },
+},
       },
       boxShadow: {
         'card':   '0 2px 16px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.05)',

@@ -15,7 +15,7 @@ module.exports = {
       MEDIA_DIR:        '/home/admin/apps/captive-portal/media',
       CORS_ORIGINS: 'http://captive.lan,http://192.168.182.1',
       LAN_IFACE:        'eth1',
-      CHILLI_QUERY_CMD: 'sudo chilli_query -s /var/run/chilli.br-lan.sock',
+      CHILLI_QUERY_CMD: 'sudo chilli_query',
     },
     error_file:      '/home/admin/apps/captive-portal/logs/error.log',
     out_file:        '/home/admin/apps/captive-portal/logs/out.log',
