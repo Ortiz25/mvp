@@ -12,7 +12,7 @@ import {
    * A) NEW USER — CoovaChilli redirects with loginurl params:
    *    URL contains ?loginurl=...&challenge=XXX&mac=YY&ip=ZZ
    *    → readHotspotParams() extracts and caches in sessionStorage
-   *    → User picks campaign → refresh() → video → survey → grant → /connecting
+   *    → User picks campaign → refresh() → video → survey → grant →
    *
    * B) RETURNING USER — visits captive.local with internet already active:
    *    No URL params, sessionStorage may be empty (different browser/session)
