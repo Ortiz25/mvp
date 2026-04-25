@@ -167,7 +167,7 @@ function VideoSection({
         </div>
       )}
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-3 gap-2 md:gap-3">
         <div className="col-span-3 sm:col-span-1">
           <FieldLabel>Duration (sec)</FieldLabel>
           <input type="number" min={10} max={7200} className="input"
@@ -513,7 +513,7 @@ function CampaignForm({
                 <textarea className="textarea" rows={2} placeholder="Short summary…"
                   value={form.description} onChange={e => upd('description', e.target.value)} />
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4">
                 <div>
                   <FieldLabel>Status</FieldLabel>
                   <select className="select" value={form.active}
@@ -529,7 +529,7 @@ function CampaignForm({
                     onChange={e => upd('session_hours', parseInt(e.target.value) || 8)} />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4">
                 <div>
                   <FieldLabel>Watch Frequency</FieldLabel>
                   <select className="select" value={form.watch_frequency}
@@ -547,7 +547,7 @@ function CampaignForm({
                   </p>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4">
                 <div>
                   <FieldLabel>Require Video</FieldLabel>
                   <select className="select" value={form.require_video}
@@ -564,7 +564,7 @@ function CampaignForm({
                   </p>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4">
                 <div>
                   <FieldLabel>Require Survey</FieldLabel>
                   <select className="select" value={form.require_survey}
@@ -588,7 +588,7 @@ function CampaignForm({
                   Enable at least one.
                 </div>
               )}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4">
                 <div>
                   <FieldLabel>Starts At</FieldLabel>
                   <input type="datetime-local" className="input"
@@ -739,7 +739,7 @@ function CampaignCard({
       </div>
 
       {/* Stats row */}
-      <div className="grid grid-cols-4 gap-2 mb-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
         {[
           { l: 'Sessions', v: c.total_sessions   ?? 0 },
           { l: 'Granted',  v: c.granted_sessions ?? 0 },
@@ -865,17 +865,17 @@ export function CampaignManager() {
 
   if (mode === 'form') {
     return (
-      <div className="p-6">
+      <div className="p-4 md:p-6">
         <CampaignForm initial={editing} onSave={handleSaved} onCancel={handleCancel} />
       </div>
     );
   }
 
   return (
-    <div className="p-6">
+    <div className="p-4 md:p-6">
       <div className="flex items-start justify-between mb-6">
         <div>
-          <h2 className="font-display font-extrabold text-2xl text-white mb-0.5">Campaigns</h2>
+          <h2 className="font-display font-extrabold text-xl md:text-2xl text-white mb-0.5">Campaigns</h2>
           <p className="text-sm text-white/35 font-body">Manage content, videos, surveys and access settings</p>
         </div>
         <div className="flex gap-2">
@@ -896,7 +896,7 @@ export function CampaignManager() {
           <button onClick={handleNew} className="btn btn-accent">+ Create First Campaign</button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
           {campaigns.map(c => (
             <CampaignCard
               key={c.id}

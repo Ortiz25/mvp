@@ -337,7 +337,7 @@ function VideoEngagementTab({ campaigns }: { campaigns: Campaign[] }) {
       ) : (
         <>
           {/* ── Stats grid ── */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 md:gap-3">
             <StatPill
               label="Total Views"
               value={s!.total_views}
@@ -369,7 +369,7 @@ function VideoEngagementTab({ campaigns }: { campaigns: Campaign[] }) {
           </div>
 
           {/* Secondary stats row */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 md:gap-3">
             <StatPill
               label="Avg Watch"
               value={s!.avg_watch_pct != null ? `${s!.avg_watch_pct}%` : '—'}
@@ -416,7 +416,7 @@ function VideoEngagementTab({ campaigns }: { campaigns: Campaign[] }) {
 
           {/* ── Overview: completion depth + drop-off side-by-side ── */}
           {subTab === 'overview' && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
               <div className="panel p-5">
                 <p className="text-[10px] font-display font-bold uppercase tracking-widest
                   text-accent-400/80 mb-1">
@@ -615,7 +615,7 @@ function SurveyResultsTab({ campaigns }: { campaigns: Campaign[] }) {
           </div>
 
           {/* Question cards grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
             {questions.map(([qId, { question, answers }], qi) => {
               const total  = Object.values(answers).reduce((a, b) => a + b, 0);
               const sorted = Object.entries(answers).sort((a, b) => b[1] - a[1]);
@@ -704,7 +704,7 @@ export function Analytics() {
 
   if (campaigns.length === 0) {
     return (
-      <div className="p-6">
+      <div className="p-4 md:p-6">
         <div className="panel p-14 text-center">
           <div className="text-5xl mb-4 opacity-40">📊</div>
           <p className="font-display font-bold text-white text-lg mb-2">No campaigns yet</p>
@@ -717,38 +717,38 @@ export function Analytics() {
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 md:p-6 pb-24 lg:pb-6 space-y-4 md:space-y-6">
 
       {/* ── Page title ── */}
       <div>
-        <h2 className="font-display font-extrabold text-2xl text-white mb-0.5">Analytics</h2>
+        <h2 className="font-display font-extrabold text-xl md:text-2xl text-white mb-0.5">Analytics</h2>
         <p className="text-sm text-white/35 font-body">
           Video engagement, completion rates and survey responses by campaign
         </p>
       </div>
 
       {/* ── Top-level tab switcher ── */}
-      <div className="flex gap-3">
+      <div className="flex gap-2 md:gap-3 overflow-x-auto pb-1 -mx-4 md:mx-0 px-4 md:px-0 snap-x">
         {MAIN_TABS.map(t => (
           <button
             key={t.id}
             onClick={() => setMainTab(t.id)}
-            className={`flex items-center gap-3 px-5 py-3.5 rounded-2xl border
-              font-display font-semibold text-sm transition-all duration-150
+            className={`flex items-center gap-2 md:gap-3 px-3 md:px-5 py-2.5 md:py-3.5 rounded-2xl border
+              font-display font-semibold text-sm transition-all duration-150 shrink-0 snap-start
               ${mainTab === t.id
                 ? 'bg-accent-500/10 border-accent-500/30 text-white'
                 : 'bg-white/[0.02] border-white/[0.06] text-white/40 hover:text-white/60 hover:bg-white/[0.04]'
               }`}>
-            <div className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors
+            <div className={`w-7 h-7 md:w-8 md:h-8 rounded-xl flex items-center justify-center transition-colors
               ${mainTab === t.id
                 ? 'bg-accent-500/15 text-accent-400'
                 : 'bg-white/[0.05] text-white/30'
               }`}>
-              <t.Icon className="w-4 h-4" />
+              <t.Icon className="w-3.5 h-3.5 md:w-4 md:h-4" />
             </div>
             <div className="text-left">
-              <p className="leading-tight">{t.label}</p>
-              <p className={`text-[9px] font-body font-normal mt-0.5 leading-tight
+              <p className="leading-tight text-xs md:text-sm">{t.label}</p>
+              <p className={`text-[9px] font-body font-normal mt-0.5 leading-tight hidden md:block
                 ${mainTab === t.id ? 'text-white/35' : 'text-white/20'}`}>
                 {t.desc}
               </p>

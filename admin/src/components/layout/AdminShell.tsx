@@ -1,4 +1,4 @@
-import { ReactNode, useState } from 'react';
+import { ReactNode, useState, useEffect, useRef } from 'react';
 
 // ── SVG icon set ───────────────────────────────────────────────────────────
 type IP = { className?: string };
@@ -7,10 +7,19 @@ const IconMegaphone = ({ className = 'w-5 h-5' }: IP) => <svg className={classNa
 const IconUsers     = ({ className = 'w-5 h-5' }: IP) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>;
 const IconBarChart  = ({ className = 'w-5 h-5' }: IP) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg>;
 const IconShield    = ({ className = 'w-5 h-5' }: IP) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>;
-const IconChevronL  = ({ className = 'w-5 h-5' }: IP) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15,18 9,12 15,6"/></svg>;
-const IconChevronR  = ({ className = 'w-5 h-5' }: IP) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9,18 15,12 9,6"/></svg>;
 const IconLogOut    = ({ className = 'w-5 h-5' }: IP) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16,17 21,12 16,7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>;
 const IconWifi      = ({ className = 'w-5 h-5' }: IP) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1.5" fill="currentColor" stroke="none"/></svg>;
+const IconChevronL  = ({ className = 'w-5 h-5' }: IP) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15,18 9,12 15,6"/></svg>;
+const IconChevronR  = ({ className = 'w-5 h-5' }: IP) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9,18 15,12 9,6"/></svg>;
+
+const IconMenu = ({ open, className = 'w-5 h-5' }: IP & { open?: boolean }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+    {open
+      ? <><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>
+      : <><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></>
+    }
+  </svg>
+);
 
 // ── Nav config ─────────────────────────────────────────────────────────────
 const NAV = [
@@ -28,91 +37,209 @@ interface Props {
 }
 
 export function AdminShell({ tab, onTab, onLogout, children }: Props) {
-  const [open, setOpen] = useState(true);
+  const [desktopOpen, setDesktopOpen] = useState(true);
+  const [mobileOpen,  setMobileOpen]  = useState(false);
+  const _sidebarRef = useRef<HTMLElement>(null);
+
+  // Close on Escape key
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setMobileOpen(false); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
+  // Lock body scroll when mobile sidebar open
+  useEffect(() => {
+    document.body.style.overflow = mobileOpen ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [mobileOpen]);
+
+  const handleTabChange = (id: string) => {
+    onTab(id);
+    setMobileOpen(false);
+  };
+
+  const currentNav = NAV.find(n => n.id === tab);
+  const sidebarCollapsed = !desktopOpen;
 
   return (
-    <div className="min-h-screen flex">
-      {/* Sidebar */}
-      <aside className={`${open ? 'w-56' : 'w-16'} shrink-0 transition-all duration-300
-        bg-surface-900 border-r border-white/[0.05] flex flex-col`}>
+    <div className="min-h-screen flex bg-surface-950">
 
-        {/* Logo */}
-        <div className={`flex items-center gap-3 px-4 py-5 border-b border-white/[0.05]
-          ${open ? '' : 'justify-center'}`}>
+      {/* Mobile overlay */}
+      <div
+        className={[
+          'fixed inset-0 z-30 bg-black/60 backdrop-blur-sm lg:hidden',
+          'transition-opacity duration-300',
+          mobileOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none',
+        ].join(' ')}
+        onClick={() => setMobileOpen(false)}
+        aria-hidden="true"
+      />
+
+      {/* Sidebar */}
+      <aside
+        ref={_sidebarRef}
+        className={[
+          'fixed inset-y-0 left-0 z-40 flex flex-col shrink-0',
+          'bg-surface-900 border-r border-white/[0.05]',
+          'transition-all duration-300 ease-in-out',
+          // Mobile: slide from left
+          mobileOpen ? 'translate-x-0' : '-translate-x-full',
+          // Desktop: always visible, width changes
+          'lg:relative lg:translate-x-0',
+          sidebarCollapsed ? 'lg:w-[68px]' : 'lg:w-60',
+          // Mobile fixed width
+          'w-60',
+        ].join(' ')}
+      >
+        {/* Logo row */}
+        <div className={[
+          'flex items-center gap-3 px-4 py-5 border-b border-white/[0.05] shrink-0',
+          sidebarCollapsed ? 'lg:justify-center lg:px-2' : '',
+        ].join(' ')}>
           <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-accent-500 to-cyan-500
-            flex items-center justify-center shrink-0
-            shadow-[0_4px_16px_rgba(16,185,129,0.3)]">
+            flex items-center justify-center shrink-0 shadow-[0_4px_16px_rgba(16,185,129,0.3)]">
             <IconShield className="w-4 h-4 text-surface-950" />
           </div>
-          {open && (
-            <div className="min-w-0">
-              <p className="font-display font-bold text-sm text-white leading-tight truncate">
-                CityNet Admin
-              </p>
-              <p className="text-[9px] font-body text-white/25 uppercase tracking-wider">
-                Dashboard
-              </p>
-            </div>
-          )}
+          <div className={['min-w-0 overflow-hidden', sidebarCollapsed ? 'lg:hidden' : ''].join(' ')}>
+            <p className="font-display font-bold text-sm text-white leading-tight truncate">CityNet Admin</p>
+            <p className="text-[9px] font-body text-white/25 uppercase tracking-wider">Dashboard</p>
+          </div>
         </div>
 
-        {/* Nav items */}
-        <nav className="flex-1 p-2 space-y-0.5">
+        {/* Nav */}
+        <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
           {NAV.map(({ id, Icon, label }) => (
-            <button key={id} onClick={() => onTab(id)}
-              className={`nav-item w-full text-left
-                ${tab === id ? 'nav-item-active' : ''}
-                ${!open ? 'justify-center px-2' : ''}`}>
+            <button
+              key={id}
+              onClick={() => handleTabChange(id)}
+              title={sidebarCollapsed ? label : undefined}
+              className={[
+                'nav-item w-full text-left group relative',
+                tab === id ? 'nav-item-active' : '',
+                sidebarCollapsed ? 'lg:justify-center lg:px-2' : '',
+              ].join(' ')}
+            >
               <Icon className="w-[18px] h-[18px] shrink-0" />
-              {open && <span>{label}</span>}
+              <span className={sidebarCollapsed ? 'lg:hidden' : ''}>{label}</span>
+              {/* Collapsed tooltip */}
+              {sidebarCollapsed && (
+                <span className="hidden lg:block absolute left-full ml-3 px-2.5 py-1.5 rounded-lg
+                  bg-surface-700 border border-white/10 text-xs font-display font-semibold text-white
+                  opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150
+                  whitespace-nowrap z-50 shadow-xl">
+                  {label}
+                </span>
+              )}
             </button>
           ))}
         </nav>
 
-        {/* Bottom controls */}
-        <div className="p-2 border-t border-white/[0.05] space-y-0.5">
-          <button onClick={() => setOpen(s => !s)}
-            className={`nav-item w-full text-left ${!open ? 'justify-center px-2' : ''}`}>
-            {open
+        {/* Bottom */}
+        <div className="p-2 border-t border-white/[0.05] space-y-0.5 shrink-0">
+          {/* Desktop-only collapse toggle */}
+          <button
+            onClick={() => setDesktopOpen(s => !s)}
+            className={[
+              'nav-item w-full text-left hidden lg:flex',
+              sidebarCollapsed ? 'justify-center px-2' : '',
+            ].join(' ')}
+          >
+            {desktopOpen
               ? <><IconChevronL className="w-[18px] h-[18px] shrink-0" /><span>Collapse</span></>
               : <IconChevronR className="w-[18px] h-[18px]" />
             }
           </button>
-          <button onClick={onLogout}
-            className={`nav-item w-full text-left text-danger-400 hover:text-danger-300
-              ${!open ? 'justify-center px-2' : ''}`}>
+          <button
+            onClick={onLogout}
+            className={[
+              'nav-item w-full text-left text-danger-400 hover:text-danger-300',
+              sidebarCollapsed ? 'lg:justify-center lg:px-2' : '',
+            ].join(' ')}
+          >
             <IconLogOut className="w-[18px] h-[18px] shrink-0" />
-            {open && <span>Sign out</span>}
+            <span className={sidebarCollapsed ? 'lg:hidden' : ''}>Sign out</span>
           </button>
         </div>
       </aside>
 
-      {/* Main */}
-      <main className="flex-1 overflow-auto min-h-screen">
+      {/* Main area */}
+      <div className="flex-1 flex flex-col min-h-screen min-w-0 overflow-hidden">
+
         {/* Top bar */}
-        <header className="sticky top-0 z-10 bg-surface-950/80 backdrop-blur-xl
-          border-b border-white/[0.05] px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            {/* Current tab icon */}
-            {(() => { const n = NAV.find(n => n.id === tab); return n ? <n.Icon className="w-4 h-4 text-white/40" /> : null; })()}
-            <h1 className="font-display font-bold text-white capitalize">
-              {NAV.find(n => n.id === tab)?.label ?? tab}
-            </h1>
+        <header className="sticky top-0 z-20 bg-surface-950/80 backdrop-blur-xl
+          border-b border-white/[0.05] px-4 md:px-6 py-3
+          flex items-center justify-between gap-3 shrink-0">
+
+          <div className="flex items-center gap-3 min-w-0">
+            {/* Hamburger — mobile only */}
+            <button
+              onClick={() => setMobileOpen(s => !s)}
+              aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
+              className="lg:hidden flex items-center justify-center w-9 h-9 rounded-xl
+                bg-white/[0.05] border border-white/[0.08] text-white/60
+                hover:text-white hover:bg-white/10 transition-all duration-150 shrink-0"
+            >
+              <IconMenu open={mobileOpen} className="w-[18px] h-[18px]" />
+            </button>
+
+            {/* Page title */}
+            <div className="flex items-center gap-2 min-w-0">
+              {currentNav && <currentNav.Icon className="w-4 h-4 text-white/35 shrink-0" />}
+              <h1 className="font-display font-bold text-white text-sm md:text-base leading-none truncate">
+                {currentNav?.label ?? tab}
+              </h1>
+            </div>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 bg-accent-500/10 border border-accent-500/20
-              rounded-full px-3 py-1">
-              <IconWifi className="w-3.5 h-3.5 text-accent-400" />
-              <span className="text-[10px] font-display font-bold text-accent-400 uppercase tracking-wider">
-                Hotspot Mode
-              </span>
+
+          {/* Status pill */}
+          <div className="shrink-0">
+            <div className="flex items-center gap-1.5 bg-accent-500/10 border border-accent-500/20
+              rounded-full px-2.5 py-1.5 md:px-3">
               <span className="w-1.5 h-1.5 rounded-full bg-accent-400 animate-pulse" />
+              <IconWifi className="w-3 h-3 text-accent-400" />
+              <span className="hidden sm:inline text-[10px] font-display font-bold text-accent-400 uppercase tracking-wider">
+                Hotspot
+              </span>
             </div>
           </div>
         </header>
 
-        {children}
-      </main>
+        {/* Page content — scrollable */}
+        <main className="flex-1 overflow-auto">
+          {children}
+        </main>
+
+        {/* Mobile bottom nav */}
+        <nav className="lg:hidden sticky bottom-0 z-20 shrink-0
+          bg-surface-900/95 backdrop-blur-xl border-t border-white/[0.05]
+          flex items-stretch justify-around">
+          {NAV.map(({ id, Icon, label }) => (
+            <button
+              key={id}
+              onClick={() => handleTabChange(id)}
+              className={[
+                'flex flex-col items-center justify-center gap-1 flex-1 py-2.5 px-1',
+                'transition-colors duration-150 relative',
+                tab === id ? 'text-accent-400' : 'text-white/30',
+              ].join(' ')}
+            >
+              {tab === id && (
+                <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5
+                  bg-accent-400 rounded-full" />
+              )}
+              <Icon className={['w-[18px] h-[18px] transition-transform duration-150',
+                tab === id ? 'scale-110' : ''].join(' ')} />
+              <span className={[
+                'text-[9px] font-display font-bold uppercase tracking-wider',
+                tab === id ? 'text-accent-400' : 'text-white/25',
+              ].join(' ')}>
+                {label}
+              </span>
+            </button>
+          ))}
+        </nav>
+      </div>
     </div>
   );
 }

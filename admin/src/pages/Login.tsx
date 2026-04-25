@@ -26,7 +26,7 @@ export function Login({ onAuth }: { onAuth: () => void }) {
           bg-accent-500/6 rounded-full blur-[120px]" />
       </div>
 
-      <div className="relative w-full max-w-sm panel p-8 shadow-[0_32px_80px_rgba(0,0,0,0.6)]">
+      <div className="relative w-full max-w-sm panel p-6 md:p-8 shadow-[0_32px_80px_rgba(0,0,0,0.6)]">
         <div className="text-center mb-8">
           <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-accent-500 to-cyan-500
             flex items-center justify-center text-3xl mx-auto mb-4

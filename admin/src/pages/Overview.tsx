@@ -52,14 +52,14 @@ export function Overview() {
   if (loading) return <Spinner />;
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="page-pad pb-20 lg:pb-6">
       <div>
-        <h2 className="font-display font-extrabold text-2xl text-white mb-0.5">Overview</h2>
+        <h2 className="font-display font-extrabold text-xl md:text-2xl text-white mb-0.5">Overview</h2>
         <p className="text-sm text-white/35 font-body">Real-time captive portal metrics</p>
       </div>
 
       {/* Stats grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
         <StatCard label="Total Sessions"  value={stats?.total ?? 0}     sub="all time"          Icon={IconUsers}    color="bg-white/[0.06] text-white" />
         <StatCard label="Active Now"       value={stats?.active ?? 0}    sub="with internet"     Icon={IconZap}      color="bg-accent-500/15 text-accent-400" />
         <StatCard label="Completed Portal" value={stats?.completed ?? 0} sub="video + survey"    Icon={IconCheck}    color="bg-info-500/15 text-info-400" />
@@ -67,7 +67,7 @@ export function Overview() {
       </div>
 
       {/* Conversion + active campaign */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
         {/* Conversion rate */}
         <div className="panel p-5">
           <div className="flex items-center justify-between mb-4">
@@ -140,6 +140,7 @@ export function Overview() {
           <div className="panel-header">
             <p className="font-display font-bold text-white">All Campaigns</p>
           </div>
+          <div className="tbl-wrap">
           <table className="tbl">
             <thead>
               <tr>
@@ -163,6 +164,7 @@ export function Overview() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>
