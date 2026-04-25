@@ -34,6 +34,8 @@ export default {
           sidebar: 'var(--bg-sidebar)',
           panel:   'var(--bg-panel)',
           input:   'var(--bg-input)',
+          hover:   'var(--bg-hover)',
+          active:  'var(--bg-active)',
         },
       },
       textColor: {
@@ -42,6 +44,8 @@ export default {
           secondary: 'var(--text-secondary)',
           muted:     'var(--text-muted)',
           faint:     'var(--text-faint)',
+          label:     'var(--text-label)',
+          nav:       'var(--text-nav)',
         },
       },
       borderColor: {
@@ -49,6 +53,7 @@ export default {
           panel:  'var(--border-panel)',
           input:  'var(--border-input)',
           subtle: 'var(--border-subtle)',
+          faint:  'var(--border-faint)',
         },
       },
       animation: {

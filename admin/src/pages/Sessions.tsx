@@ -12,8 +12,8 @@ function Empty({ icon, title, sub }: { icon: string; title: string; sub?: string
   return (
     <div className="panel p-14 text-center">
       <div className="text-4xl mb-3">{icon}</div>
-      <p className="text-white/40 font-body text-sm">{title}</p>
-      {sub && <p className="text-white/20 font-body text-xs mt-1">{sub}</p>}
+      <p className="text-theme-muted font-body text-sm">{title}</p>
+      {sub && <p className="text-theme-faint font-body text-xs mt-1">{sub}</p>}
     </div>
   );
 }
@@ -22,7 +22,7 @@ function ProgressBadge({ ok, label }: { ok: boolean; label: string }) {
   return (
     <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px]
       font-display font-bold uppercase tracking-wide
-      ${ok ? 'bg-accent-500/15 text-accent-400' : 'bg-white/[0.05] text-white/25'}`}>
+      ${ok ? 'bg-accent-500/15 text-accent-400' : 'bg-theme-input text-theme-faint'}`}>
       {ok ? '✓' : '·'} {label}
     </span>
   );
@@ -75,7 +75,7 @@ function StatusBadge({ status }: { status: SessionStatus }) {
     case 'expired':
       return (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px]
-          font-display font-bold bg-white/[0.05] text-white/35 border border-white/[0.08]">
+          font-display font-bold bg-theme-input text-theme-muted border border-theme-input">
           Expired
         </span>
       );
@@ -98,14 +98,14 @@ function StatusBadge({ status }: { status: SessionStatus }) {
 
 function ExpiryCell({ s, status }: { s: Session; status: SessionStatus }) {
   if (!s.expires_at) {
-    if (status === 'pending') return <span className="text-white/20 text-xs">—</span>;
+    if (status === 'pending') return <span className="text-theme-faint text-xs">—</span>;
     if (status === 'revoked') return <span className="text-red-400/50 text-xs italic">revoked early</span>;
-    return <span className="text-white/20 text-xs">—</span>;
+    return <span className="text-theme-faint text-xs">—</span>;
   }
   const d    = new Date(s.expires_at);
   const past = d <= new Date();
   return (
-    <span className={`text-xs whitespace-nowrap font-mono ${past ? 'text-white/30' : 'text-white/60'}`}>
+    <span className={`text-xs whitespace-nowrap font-mono ${past ? 'text-theme-faint' : 'text-theme-secondary'}`}>
       {d.toLocaleString()}
     </span>
   );
@@ -175,13 +175,13 @@ export function Sessions() {
     <div className="p-4 md:p-6 pb-24 lg:pb-6">
       <div className="flex items-start justify-between mb-4 md:mb-5 gap-4 flex-wrap">
         <div>
-          <h2 className="font-display font-extrabold text-xl md:text-2xl text-white mb-0.5">Sessions</h2>
-          <p className="text-sm text-white/35 font-body">All portal sessions and their status</p>
+          <h2 className="font-display font-extrabold text-xl md:text-2xl text-theme-primary mb-0.5">Sessions</h2>
+          <p className="text-sm text-theme-muted font-body">All portal sessions and their status</p>
         </div>
         <div className="flex gap-2 flex-wrap items-center w-full md:w-auto">
           {/* Search box */}
           <div className="relative w-full md:w-auto">
-            <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/25 pointer-events-none"
+            <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-theme-faint pointer-events-none"
               viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
               strokeLinecap="round" strokeLinejoin="round">
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
@@ -191,12 +191,12 @@ export function Sessions() {
               placeholder="Search MAC, IP or campaign…"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className="select text-sm py-1.5 pl-8 pr-3 w-full md:w-56 placeholder:text-white/20"
+              className="select text-sm py-1.5 pl-8 pr-3 w-full md:w-56 placeholder:text-theme-faint"
             />
             {search && (
               <button
                 onClick={() => setSearch('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 transition-colors">
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-theme-faint hover:text-theme-secondary transition-colors">
                 ✕
               </button>
             )}
@@ -210,10 +210,10 @@ export function Sessions() {
                 tracking-wider transition-all duration-150 border
                 ${filterStatus === st
                   ? st === 'active'  ? 'bg-accent-500/20 border-accent-500/40 text-accent-400'
-                  : st === 'expired' ? 'bg-white/10 border-white/20 text-white/60'
+                  : st === 'expired' ? 'bg-white/10 border-theme-input text-theme-secondary'
                   : st === 'revoked' ? 'bg-red-500/15 border-red-500/30 text-red-400'
                   :                   'bg-amber-500/10 border-amber-500/25 text-amber-400/70'
-                  : 'bg-white/[0.03] border-white/[0.07] text-white/30 hover:text-white/50'
+                  : 'bg-theme-input border-theme-subtle text-theme-faint hover:text-theme-muted'
                 }`}>
               {st} <span className="opacity-70 font-normal">({counts[st as SessionStatus]})</span>
             </button>
@@ -257,10 +257,10 @@ export function Sessions() {
                 return (
                   <tr key={s.id} className={status === 'active' ? 'bg-accent-500/[0.02]' : ''}>
                     <td>
-                      <p className="font-mono text-[11px] text-white/70">{s.mac_address ?? '—'}</p>
-                      <p className="font-mono text-[10px] text-white/30">{s.ip_address}</p>
+                      <p className="font-mono text-[11px] text-theme-secondary">{s.mac_address ?? '—'}</p>
+                      <p className="font-mono text-[10px] text-theme-faint">{s.ip_address}</p>
                     </td>
-                    <td className="text-white/60 text-xs">{s.campaign_name ?? '—'}</td>
+                    <td className="text-theme-secondary text-xs">{s.campaign_name ?? '—'}</td>
                     <td>
                       <div className="flex flex-wrap gap-1">
                         <ProgressBadge ok={!!s.video_watched}  label="Video" />
@@ -271,13 +271,13 @@ export function Sessions() {
                     <td>
                       <StatusBadge status={status} />
                     </td>
-                    <td className="text-white/35 text-xs whitespace-nowrap">
+                    <td className="text-theme-muted text-xs whitespace-nowrap">
                       {new Date(s.created_at).toLocaleString()}
                     </td>
-                    <td className="text-white/35 text-xs whitespace-nowrap">
+                    <td className="text-theme-muted text-xs whitespace-nowrap">
                       {s.granted_at
                         ? new Date(s.granted_at).toLocaleString()
-                        : <span className="text-white/20">—</span>}
+                        : <span className="text-theme-faint">—</span>}
                     </td>
                     <td>
                       <ExpiryCell s={s} status={status} />
@@ -299,8 +299,8 @@ export function Sessions() {
             </tbody>
           </table>
           </div>
-          <div className="px-4 py-2.5 border-t border-white/[0.05] flex items-center gap-2">
-            <p className="text-[10px] text-white/25 font-body">
+          <div className="px-4 py-2.5 border-t border-theme-subtle flex items-center gap-2">
+            <p className="text-[10px] text-theme-faint font-body">
               Showing {filtered.length} of {sessions.length} sessions
             </p>
           </div>

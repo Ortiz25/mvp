@@ -32,7 +32,7 @@ function StatusMsg({ msg, ok }: { msg: string; ok?: boolean }) {
   return (
     <div className={`px-4 py-3 rounded-xl text-xs font-body border ${
       ok ? 'bg-accent-500/10 border-accent-500/20 text-accent-400'
-         : 'bg-white/5 border-white/10 text-white/50'
+         : 'bg-theme-input border-theme-input text-theme-muted'
     }`}>
       {msg}
     </div>
@@ -144,7 +144,7 @@ function VideoSection({
   return (
     <div className="space-y-4">
       {loadingVid && (
-        <div className="flex items-center gap-2 text-xs text-white/30 font-body">
+        <div className="flex items-center gap-2 text-xs text-theme-faint font-body">
           <Spin sm /> Loading current video…
         </div>
       )}
@@ -155,7 +155,7 @@ function VideoSection({
             <span className="text-xl shrink-0">🎬</span>
             <div className="min-w-0">
               <p className="text-xs font-display font-bold text-accent-400 truncate">{existing.title}</p>
-              <p className="text-[10px] text-white/30 font-body">
+              <p className="text-[10px] text-theme-faint font-body">
                 {existing.filename} · {existing.duration_seconds}s · {Math.round(existing.required_watch_pct * 100)}% required
               </p>
             </div>
@@ -187,7 +187,7 @@ function VideoSection({
 
       <label className={`block border-2 border-dashed rounded-xl p-5 text-center cursor-pointer
         transition-all duration-200 group
-        ${pickedFile ? 'border-accent-500/40 bg-accent-500/5' : 'border-white/10 hover:border-white/20 hover:bg-white/[0.02]'}`}>
+        ${pickedFile ? 'border-accent-500/40 bg-accent-500/5' : 'border-theme-input hover:border-theme-input hover:bg-theme-hover'}`}>
         <input
           ref={fileRef}
           type="file"
@@ -199,10 +199,10 @@ function VideoSection({
           }}
         />
         <div className="text-2xl mb-1.5">{pickedFile ? '📹' : '📁'}</div>
-        <p className="text-xs font-display font-semibold text-white/50 group-hover:text-white/70 transition-colors">
+        <p className="text-xs font-display font-semibold text-theme-muted group-hover:text-theme-secondary transition-colors">
           {pickedFile ? pickedFile.name : existing ? 'Click to replace video file' : 'Click to select video file'}
         </p>
-        <p className="text-[10px] text-white/20 font-body mt-0.5">MP4, WebM, MOV</p>
+        <p className="text-[10px] text-theme-faint font-body mt-0.5">MP4, WebM, MOV</p>
       </label>
 
       {pickedFile && campaignId && (
@@ -223,7 +223,7 @@ function VideoSection({
       )}
 
       {!campaignId && pickedFile && (
-        <p className="text-[10px] text-white/30 font-body text-center">
+        <p className="text-[10px] text-theme-faint font-body text-center">
           Video will upload automatically after campaign is saved
         </p>
       )}
@@ -298,7 +298,7 @@ function SurveySection({
   };
 
   if (loading) return (
-    <div className="flex items-center gap-2 text-xs text-white/30 font-body">
+    <div className="flex items-center gap-2 text-xs text-theme-faint font-body">
       <Spin sm /> Loading survey…
     </div>
   );
@@ -312,7 +312,7 @@ function SurveySection({
       </div>
 
       {questions.map((q, qi) => (
-        <div key={qi} className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-4 space-y-3">
+        <div key={qi} className="rounded-xl border border-theme-subtle bg-white/[0.02] p-4 space-y-3">
           <div className="flex items-center gap-2">
             <span className="w-5 h-5 rounded-full bg-accent-500/15 text-accent-400 text-[10px]
               font-display font-bold flex items-center justify-center shrink-0">
@@ -330,7 +330,7 @@ function SurveySection({
                   value={opt} onChange={e => updOpt(qi, oi, e.target.value)} />
                 {q.options.length > 2 && (
                   <button onClick={() => removeOpt(qi, oi)}
-                    className="text-white/20 hover:text-red-400 text-xs transition-colors">✕</button>
+                    className="text-theme-faint hover:text-red-400 text-xs transition-colors">✕</button>
                 )}
               </div>
             ))}
@@ -353,7 +353,7 @@ function SurveySection({
       )}
 
       {!campaignId && (
-        <p className="text-[10px] text-white/25 font-body text-center">
+        <p className="text-[10px] text-theme-faint font-body text-center">
           Survey will be saved after campaign is created
         </p>
       )}
@@ -467,10 +467,10 @@ function CampaignForm({
       {/* Header */}
       <div className="panel-header bg-gradient-to-r from-white/[0.02] to-transparent">
         <div>
-          <h3 className="font-display font-bold text-white">
+          <h3 className="font-display font-bold text-theme-primary">
             {isEdit ? `✏️ Edit: ${initial!.name}` : '✨ New Campaign'}
           </h3>
-          <p className="text-[10px] text-white/30 font-body mt-0.5">
+          <p className="text-[10px] text-theme-faint font-body mt-0.5">
             {isEdit ? 'Update details, replace video, or edit survey' : 'Fill in details, then upload video and survey'}
           </p>
         </div>
@@ -478,7 +478,7 @@ function CampaignForm({
       </div>
 
       {/* Tab bar */}
-      <div className="flex border-b border-white/[0.05] bg-surface-900/40">
+      <div className="flex border-b border-theme-subtle bg-surface-900/40">
         {TABS.map(t => (
           <button
             key={t.id}
@@ -487,7 +487,7 @@ function CampaignForm({
               transition-all duration-150 border-b-2
               ${tab === t.id
                 ? 'text-accent-400 border-accent-500'
-                : 'text-white/35 border-transparent hover:text-white/60'}`}>
+                : 'text-theme-muted border-transparent hover:text-theme-secondary'}`}>
             <span>{t.icon}</span> {t.label}
             {!saved?.id && t.id !== 'details' && (
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400/50" />
@@ -540,7 +540,7 @@ function CampaignForm({
                   </select>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-                  <p className="text-[10px] text-white/30 font-body leading-relaxed">
+                  <p className="text-[10px] text-theme-faint font-body leading-relaxed">
                     {form.watch_frequency === 'once_per_day' && 'Watch video once per day. Same-day top-ups skip video.'}
                     {form.watch_frequency === 'once_ever' && 'Watch once per campaign lifetime. Never required again.'}
                     {form.watch_frequency === 'always' && 'Must watch video every session before getting access.'}
@@ -557,7 +557,7 @@ function CampaignForm({
                   </select>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-                  <p className="text-[10px] text-white/30 font-body leading-relaxed">
+                  <p className="text-[10px] text-theme-faint font-body leading-relaxed">
                     {form.require_video
                       ? 'Users must watch the video to get access.'
                       : 'Video skipped — survey only (or instant access if survey also off).'}
@@ -574,7 +574,7 @@ function CampaignForm({
                   </select>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-                  <p className="text-[10px] text-white/30 font-body leading-relaxed">
+                  <p className="text-[10px] text-theme-faint font-body leading-relaxed">
                     {form.require_survey
                       ? 'Users must complete survey before getting access.'
                       : 'Access granted right after video — no survey shown.'}
@@ -693,13 +693,13 @@ function CampaignCard({
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="font-display font-bold text-white text-[15px] truncate">{c.name}</h3>
+            <h3 className="font-display font-bold text-theme-primary text-[15px] truncate">{c.name}</h3>
             <span className={on ? 'badge-on' : 'badge-off'}>
               {on ? <><span className="w-1.5 h-1.5 rounded-full bg-accent-400 animate-pulse" />ACTIVE</> : 'INACTIVE'}
             </span>
           </div>
           {c.description && (
-            <p className="text-xs text-white/35 font-body mt-1 line-clamp-2">{c.description}</p>
+            <p className="text-xs text-theme-muted font-body mt-1 line-clamp-2">{c.description}</p>
           )}
           {/* Campaign date range — always visible */}
           {(() => {
@@ -711,25 +711,25 @@ function CampaignCard({
             return (
               <div className="flex flex-col gap-0.5 mt-1.5">
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[9px] font-display font-bold uppercase tracking-wider text-white/20 w-10">Starts</span>
+                  <span className="text-[9px] font-display font-bold uppercase tracking-wider text-theme-faint w-10">Starts</span>
                   {start ? (
-                    <span className={`text-[10px] font-mono ${notStarted ? 'text-amber-400/70' : 'text-white/40'}`}>
+                    <span className={`text-[10px] font-mono ${notStarted ? 'text-amber-400/70' : 'text-theme-muted'}`}>
                       {toInputDate(c.start_date).replace('T', ' ')}
                       {notStarted && <span className="ml-1 text-[9px] text-amber-400/60">(upcoming)</span>}
                     </span>
                   ) : (
-                    <span className="text-[10px] text-white/20 font-body italic">immediately</span>
+                    <span className="text-[10px] text-theme-faint font-body italic">immediately</span>
                   )}
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[9px] font-display font-bold uppercase tracking-wider text-white/20 w-10">Ends</span>
+                  <span className="text-[9px] font-display font-bold uppercase tracking-wider text-theme-faint w-10">Ends</span>
                   {end ? (
-                    <span className={`text-[10px] font-mono ${expired ? 'text-red-400/70' : 'text-white/40'}`}>
+                    <span className={`text-[10px] font-mono ${expired ? 'text-red-400/70' : 'text-theme-muted'}`}>
                       {toInputDate(c.end_date).replace('T', ' ')}
                       {expired && <span className="ml-1 text-[9px] text-red-400/60">(expired)</span>}
                     </span>
                   ) : (
-                    <span className="text-[10px] text-white/20 font-body italic">no end date</span>
+                    <span className="text-[10px] text-theme-faint font-body italic">no end date</span>
                   )}
                 </div>
               </div>
@@ -746,9 +746,9 @@ function CampaignCard({
           { l: 'Hours',    v: `${c.session_hours}h` },
           { l: 'Watch%',   v: `${Math.round((c.video_required_pct ?? 0.8) * 100)}%` },
         ].map(({ l, v }) => (
-          <div key={l} className="bg-white/3 rounded-lg p-2 text-center">
-            <p className="font-display font-bold text-sm text-white">{v}</p>
-            <p className="text-[9px] text-white/25 font-body uppercase tracking-wide">{l}</p>
+          <div key={l} className="bg-theme-input rounded-lg p-2 text-center">
+            <p className="font-display font-bold text-sm text-theme-primary">{v}</p>
+            <p className="text-[9px] text-theme-faint font-body uppercase tracking-wide">{l}</p>
           </div>
         ))}
       </div>
@@ -756,14 +756,14 @@ function CampaignCard({
       {/* Watch frequency + engagement mode row */}
       <div className="flex items-center gap-2 mb-4 flex-wrap">
         {/* Frequency badge */}
-        <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/[0.04]
-          border border-white/[0.07]" title={freq.desc}>
+        <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-theme-input
+          border border-theme-subtle" title={freq.desc}>
           <span className="text-[11px]">{freq.icon}</span>
-          <span className="text-[10px] font-display font-bold text-white/50">{freq.label}</span>
+          <span className="text-[10px] font-display font-bold text-theme-muted">{freq.label}</span>
         </div>
         {/* Engagement mode badge */}
-        <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/[0.04]
-          border border-white/[0.07]"
+        <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-theme-input
+          border border-theme-subtle"
           title={
             !c.require_video && !c.require_survey ? 'No engagement required'
             : !c.require_video ? 'Survey only'
@@ -776,7 +776,7 @@ function CampaignCard({
              : !c.require_survey ? '🎬'
              : '🎬📋'}
           </span>
-          <span className="text-[10px] font-display font-bold text-white/50">
+          <span className="text-[10px] font-display font-bold text-theme-muted">
             {!c.require_video && !c.require_survey ? 'Instant access'
              : !c.require_video ? 'Survey only'
              : !c.require_survey ? 'Video only'
@@ -804,20 +804,20 @@ function CampaignCard({
       </div>
 
       {/* Quick engagement stats — full analytics in the Analytics tab */}
-      <div className="mt-3 pt-3 border-t border-white/[0.05] flex gap-3 flex-wrap">
-        <span className="text-[9px] font-body text-white/20 uppercase tracking-wider self-center">Video</span>
+      <div className="mt-3 pt-3 border-t border-theme-subtle flex gap-3 flex-wrap">
+        <span className="text-[9px] font-body text-theme-faint uppercase tracking-wider self-center">Video</span>
         {c.video_filename ? (
           <>
-            <span className="text-[10px] font-body text-white/35">
-              Watch threshold: <span className="text-white/60 font-bold">{Math.round((c.video_required_pct ?? 0.8) * 100)}%</span>
+            <span className="text-[10px] font-body text-theme-muted">
+              Watch threshold: <span className="text-theme-secondary font-bold">{Math.round((c.video_required_pct ?? 0.8) * 100)}%</span>
             </span>
-            <span className="text-[10px] font-body text-white/20">·</span>
+            <span className="text-[10px] font-body text-theme-faint">·</span>
             <span className="text-[10px] font-body text-accent-400/60">
               See <span className="underline underline-offset-2">Analytics</span> tab for completion & drop-off rates
             </span>
           </>
         ) : (
-          <span className="text-[10px] font-body text-white/20 italic">No video uploaded</span>
+          <span className="text-[10px] font-body text-theme-faint italic">No video uploaded</span>
         )}
       </div>
     </div>
@@ -875,8 +875,8 @@ export function CampaignManager() {
     <div className="p-4 md:p-6">
       <div className="flex items-start justify-between mb-6">
         <div>
-          <h2 className="font-display font-extrabold text-xl md:text-2xl text-white mb-0.5">Campaigns</h2>
-          <p className="text-sm text-white/35 font-body">Manage content, videos, surveys and access settings</p>
+          <h2 className="font-display font-extrabold text-xl md:text-2xl text-theme-primary mb-0.5">Campaigns</h2>
+          <p className="text-sm text-theme-muted font-body">Manage content, videos, surveys and access settings</p>
         </div>
         <div className="flex gap-2">
           <button onClick={load} className="btn btn-surface btn-sm">⟳</button>
@@ -891,8 +891,8 @@ export function CampaignManager() {
       ) : campaigns.length === 0 ? (
         <div className="panel p-16 text-center">
           <div className="text-5xl mb-4">📭</div>
-          <h3 className="font-display font-bold text-white text-lg mb-2">No campaigns yet</h3>
-          <p className="text-sm text-white/40 font-body mb-6">Create your first campaign to start serving the portal.</p>
+          <h3 className="font-display font-bold text-theme-primary text-lg mb-2">No campaigns yet</h3>
+          <p className="text-sm text-theme-muted font-body mb-6">Create your first campaign to start serving the portal.</p>
           <button onClick={handleNew} className="btn btn-accent">+ Create First Campaign</button>
         </div>
       ) : (

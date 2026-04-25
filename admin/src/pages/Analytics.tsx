@@ -47,8 +47,8 @@ function Empty({ icon, title, sub }: { icon: string; title: string; sub?: string
   return (
     <div className="flex flex-col items-center justify-center py-16 gap-3">
       <div className="text-4xl opacity-40">{icon}</div>
-      <p className="text-white/35 font-body text-sm">{title}</p>
-      {sub && <p className="text-white/20 font-body text-xs">{sub}</p>}
+      <p className="text-theme-muted font-body text-sm">{title}</p>
+      {sub && <p className="text-theme-faint font-body text-xs">{sub}</p>}
     </div>
   );
 }
@@ -93,21 +93,21 @@ function StatPill({
     red:     'text-red-400',
     amber:   'text-amber-400',
     blue:    'text-info-400',
-    default: 'text-white',
+    default: 'text-theme-primary',
   };
   const iconBg = {
     green:   'bg-accent-500/10 text-accent-400',
     red:     'bg-red-500/10 text-red-400',
     amber:   'bg-amber-500/10 text-amber-400',
     blue:    'bg-info-500/10 text-info-400',
-    default: 'bg-white/[0.06] text-white/50',
+    default: 'bg-theme-input text-theme-muted',
   };
   const col  = colors[accent ?? 'default'];
   const ibg  = iconBg[accent ?? 'default'];
   return (
-    <div className="bg-white/[0.03] rounded-2xl p-4 border border-white/[0.06] flex flex-col gap-2">
+    <div className="bg-theme-input rounded-2xl p-4 border border-theme-subtle flex flex-col gap-2">
       <div className="flex items-center justify-between">
-        <p className="text-[9px] font-display font-bold uppercase tracking-[0.15em] text-white/30">
+        <p className="text-[9px] font-display font-bold uppercase tracking-[0.15em] text-theme-faint">
           {label}
         </p>
         {Icon && (
@@ -119,7 +119,7 @@ function StatPill({
       <p className={`font-display font-black text-2xl leading-none tracking-tight ${col}`}>
         {value}
       </p>
-      {sub && <p className="text-[10px] text-white/25 font-body">{sub}</p>}
+      {sub && <p className="text-[10px] text-theme-faint font-body">{sub}</p>}
     </div>
   );
 }
@@ -137,7 +137,7 @@ function BucketChart({
 }) {
   const max = buckets.reduce((m, b) => Math.max(m, b.count), 1);
   if (buckets.length === 0)
-    return <p className="text-xs text-white/20 font-body py-4 text-center">{emptyMsg}</p>;
+    return <p className="text-xs text-theme-faint font-body py-4 text-center">{emptyMsg}</p>;
   const total = buckets.reduce((s, b) => s + b.count, 0);
   return (
     <div className="space-y-3">
@@ -145,20 +145,20 @@ function BucketChart({
         const pct = total > 0 ? Math.round((b.count / total) * 100) : 0;
         return (
           <div key={b.bucket} className="flex items-center gap-3">
-            <span className="text-[10px] font-mono text-white/40 w-16 shrink-0 text-right">
+            <span className="text-[10px] font-mono text-theme-muted w-16 shrink-0 text-right">
               {b.bucket}
             </span>
-            <div className="flex-1 h-2.5 rounded-full bg-white/[0.05] overflow-hidden">
+            <div className="flex-1 h-2.5 rounded-full bg-theme-input overflow-hidden">
               <div
                 className={`h-full rounded-full transition-all duration-700 ${colorClass}`}
                 style={{ width: `${(b.count / max) * 100}%` }}
               />
             </div>
             <div className="flex items-center gap-1.5 shrink-0 w-20">
-              <span className="text-[11px] font-display font-bold text-white/60 w-8 text-right">
+              <span className="text-[11px] font-display font-bold text-theme-secondary w-8 text-right">
                 {b.count}
               </span>
-              <span className="text-[10px] text-white/25 font-body">
+              <span className="text-[10px] text-theme-faint font-body">
                 {pct}%
               </span>
             </div>
@@ -203,16 +203,16 @@ function TrendChart({ trend }: { trend: EngagementStats['trend'] }) {
               />
             </div>
             {i % 5 === 0 && (
-              <p className="text-[7px] font-mono text-white/15 text-center mt-1 whitespace-nowrap">
+              <p className="text-[7px] font-mono text-theme-faint text-center mt-1 whitespace-nowrap">
                 {r.day.slice(5)}
               </p>
             )}
             {/* hover tooltip */}
             <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 z-20
               hidden group-hover:flex flex-col items-center whitespace-nowrap pointer-events-none
-              bg-surface-800 border border-white/10 rounded-xl px-3 py-2 text-[9px] shadow-xl gap-0.5">
-              <span className="text-white/50 font-display font-bold mb-1">{r.day}</span>
-              <span className="text-white/70">{r.views} views</span>
+              bg-surface-800 border border-theme-input rounded-xl px-3 py-2 text-[9px] shadow-xl gap-0.5">
+              <span className="text-theme-muted font-display font-bold mb-1">{r.day}</span>
+              <span className="text-theme-secondary">{r.views} views</span>
               <span className="text-accent-400">{r.completed} completed</span>
               {r.dropped > 0 && <span className="text-red-400">{r.dropped} dropped</span>}
             </div>
@@ -227,7 +227,7 @@ function TrendChart({ trend }: { trend: EngagementStats['trend'] }) {
         ].map(({ color, label }) => (
           <div key={label} className="flex items-center gap-1.5">
             <div className={`w-2.5 h-2.5 rounded-sm ${color}`} />
-            <span className="text-[9px] text-white/30 font-body">{label}</span>
+            <span className="text-[9px] text-theme-faint font-body">{label}</span>
           </div>
         ))}
       </div>
@@ -242,13 +242,13 @@ function SurveyAnswerBar({ answer, count, total }: { answer: string; count: numb
   return (
     <div>
       <div className="flex items-center justify-between mb-1.5 gap-2">
-        <span className="text-xs text-white/60 font-body truncate">{answer}</span>
+        <span className="text-xs text-theme-secondary font-body truncate">{answer}</span>
         <span className="text-xs font-display font-bold text-accent-400 shrink-0">
           {pct}%
-          <span className="text-white/25 font-normal ml-1">({count})</span>
+          <span className="text-theme-faint font-normal ml-1">({count})</span>
         </span>
       </div>
-      <div className="h-1.5 rounded-full bg-white/[0.05] overflow-hidden">
+      <div className="h-1.5 rounded-full bg-theme-input overflow-hidden">
         <div
           className="h-full rounded-full bg-gradient-to-r from-accent-500 to-cyan-400 transition-all duration-700"
           style={{ width: `${pct}%` }}
@@ -309,8 +309,8 @@ function VideoEngagementTab({ campaigns }: { campaigns: Campaign[] }) {
       {/* ── Header row ── */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <h3 className="font-display font-bold text-white text-lg">Video Engagement</h3>
-          <p className="text-xs text-white/35 font-body mt-0.5">
+          <h3 className="font-display font-bold text-theme-primary text-lg">Video Engagement</h3>
+          <p className="text-xs text-theme-muted font-body mt-0.5">
             Watch depth, completions and drop-off analysis per campaign
           </p>
         </div>
@@ -397,7 +397,7 @@ function VideoEngagementTab({ campaigns }: { campaigns: Campaign[] }) {
           </div>
 
           {/* ── Sub-tab nav ── */}
-          <div className="flex gap-px border-b border-white/[0.05]">
+          <div className="flex gap-px border-b border-theme-subtle">
             {SUB_TABS.map(t => (
               <button
                 key={t.id}
@@ -406,7 +406,7 @@ function VideoEngagementTab({ campaigns }: { campaigns: Campaign[] }) {
                   font-bold uppercase tracking-wider border-b-2 transition-all duration-150
                   ${subTab === t.id
                     ? 'text-accent-400 border-accent-500'
-                    : 'text-white/25 border-transparent hover:text-white/50 hover:border-white/10'
+                    : 'text-theme-faint border-transparent hover:text-theme-muted hover:border-theme-input'
                   }`}>
                 <span>{t.icon}</span>
                 <span>{t.label}</span>
@@ -422,7 +422,7 @@ function VideoEngagementTab({ campaigns }: { campaigns: Campaign[] }) {
                   text-accent-400/80 mb-1">
                   ✅ Completion depth
                 </p>
-                <p className="text-[10px] text-white/25 font-body mb-4 leading-relaxed">
+                <p className="text-[10px] text-theme-faint font-body mb-4 leading-relaxed">
                   How far completers watched past the required threshold.
                   A high "97–100%" share means your video holds attention well past the minimum.
                 </p>
@@ -437,7 +437,7 @@ function VideoEngagementTab({ campaigns }: { campaigns: Campaign[] }) {
                   text-red-400/80 mb-1">
                   📉 Drop-off points
                 </p>
-                <p className="text-[10px] text-white/25 font-body mb-4 leading-relaxed">
+                <p className="text-[10px] text-theme-faint font-body mb-4 leading-relaxed">
                   Where viewers quit before hitting the required threshold.
                   High counts in early buckets suggest the intro isn't engaging enough.
                 </p>
@@ -459,10 +459,10 @@ function VideoEngagementTab({ campaigns }: { campaigns: Campaign[] }) {
                   <IconCheckCircle className="w-4.5 h-4.5 text-accent-400" />
                 </div>
                 <div>
-                  <p className="font-display font-bold text-white">
+                  <p className="font-display font-bold text-theme-primary">
                     {s!.completed} viewers completed
                   </p>
-                  <p className="text-xs text-white/35 font-body mt-0.5">
+                  <p className="text-xs text-theme-muted font-body mt-0.5">
                     Here's how far they watched past the required threshold.
                     A high share in the "97–100%" bucket means your content holds attention
                     well after the gate.
@@ -486,10 +486,10 @@ function VideoEngagementTab({ campaigns }: { campaigns: Campaign[] }) {
                   <IconXCircle className="w-4.5 h-4.5 text-red-400" />
                 </div>
                 <div>
-                  <p className="font-display font-bold text-white">
+                  <p className="font-display font-bold text-theme-primary">
                     {s!.dropped_off} viewers dropped off
                   </p>
-                  <p className="text-xs text-white/35 font-body mt-0.5">
+                  <p className="text-xs text-theme-muted font-body mt-0.5">
                     Where they quit before completing the required watch threshold.
                     Spikes in the "0–10%" bucket mean people are bouncing from the intro;
                     spikes near "75–90%" suggest they're close but losing interest near the end.
@@ -513,8 +513,8 @@ function VideoEngagementTab({ campaigns }: { campaigns: Campaign[] }) {
                   <IconTrendUp className="w-4.5 h-4.5 text-info-400" />
                 </div>
                 <div>
-                  <p className="font-display font-bold text-white">Daily activity — last 30 days</p>
-                  <p className="text-xs text-white/35 font-body mt-0.5">
+                  <p className="font-display font-bold text-theme-primary">Daily activity — last 30 days</p>
+                  <p className="text-xs text-theme-muted font-body mt-0.5">
                     Hover any bar for exact counts. Taller bars are more views;
                     green fill is completions, red is drop-offs.
                   </p>
@@ -572,8 +572,8 @@ function SurveyResultsTab({ campaigns }: { campaigns: Campaign[] }) {
       {/* ── Header row ── */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <h3 className="font-display font-bold text-white text-lg">Survey Results</h3>
-          <p className="text-xs text-white/35 font-body mt-0.5">
+          <h3 className="font-display font-bold text-theme-primary text-lg">Survey Results</h3>
+          <p className="text-xs text-theme-muted font-body mt-0.5">
             Aggregated responses across all sessions for the selected campaign
           </p>
         </div>
@@ -606,10 +606,10 @@ function SurveyResultsTab({ campaigns }: { campaigns: Campaign[] }) {
           <div className="flex items-center gap-3 px-4 py-3 rounded-xl
             bg-accent-500/[0.06] border border-accent-500/15">
             <IconClipboard className="w-4 h-4 text-accent-400 shrink-0" />
-            <p className="text-xs text-white/50 font-body">
+            <p className="text-xs text-theme-muted font-body">
               <span className="font-display font-bold text-accent-400">{totalResponses}</span>
               {' '}total responses across{' '}
-              <span className="font-display font-bold text-white/70">{questions.length}</span>
+              <span className="font-display font-bold text-theme-secondary">{questions.length}</span>
               {' '}question{questions.length !== 1 ? 's' : ''}
             </p>
           </div>
@@ -630,13 +630,13 @@ function SurveyResultsTab({ campaigns }: { campaigns: Campaign[] }) {
                       {qi + 1}
                     </span>
                     <div className="min-w-0">
-                      <p className="font-display font-semibold text-white text-sm leading-snug">
+                      <p className="font-display font-semibold text-theme-primary text-sm leading-snug">
                         {question}
                       </p>
-                      <p className="text-[10px] text-white/25 font-body mt-0.5">
+                      <p className="text-[10px] text-theme-faint font-body mt-0.5">
                         {total} response{total !== 1 ? 's' : ''}
                         {winner && (
-                          <> · top answer: <span className="text-white/40">{winner}</span></>
+                          <> · top answer: <span className="text-theme-muted">{winner}</span></>
                         )}
                       </p>
                     </div>
@@ -707,8 +707,8 @@ export function Analytics() {
       <div className="p-4 md:p-6">
         <div className="panel p-14 text-center">
           <div className="text-5xl mb-4 opacity-40">📊</div>
-          <p className="font-display font-bold text-white text-lg mb-2">No campaigns yet</p>
-          <p className="text-sm text-white/35 font-body">
+          <p className="font-display font-bold text-theme-primary text-lg mb-2">No campaigns yet</p>
+          <p className="text-sm text-theme-muted font-body">
             Create a campaign to start seeing analytics
           </p>
         </div>
@@ -721,8 +721,8 @@ export function Analytics() {
 
       {/* ── Page title ── */}
       <div>
-        <h2 className="font-display font-extrabold text-xl md:text-2xl text-white mb-0.5">Analytics</h2>
-        <p className="text-sm text-white/35 font-body">
+        <h2 className="font-display font-extrabold text-xl md:text-2xl text-theme-primary mb-0.5">Analytics</h2>
+        <p className="text-sm text-theme-muted font-body">
           Video engagement, completion rates and survey responses by campaign
         </p>
       </div>
@@ -736,20 +736,20 @@ export function Analytics() {
             className={`flex items-center gap-2 md:gap-3 px-3 md:px-5 py-2.5 md:py-3.5 rounded-2xl border
               font-display font-semibold text-sm transition-all duration-150 shrink-0 snap-start
               ${mainTab === t.id
-                ? 'bg-accent-500/10 border-accent-500/30 text-white'
-                : 'bg-white/[0.02] border-white/[0.06] text-white/40 hover:text-white/60 hover:bg-white/[0.04]'
+                ? 'bg-accent-500/10 border-accent-500/30 text-theme-primary'
+                : 'bg-white/[0.02] border-theme-subtle text-theme-muted hover:text-theme-secondary hover:bg-theme-input'
               }`}>
             <div className={`w-7 h-7 md:w-8 md:h-8 rounded-xl flex items-center justify-center transition-colors
               ${mainTab === t.id
                 ? 'bg-accent-500/15 text-accent-400'
-                : 'bg-white/[0.05] text-white/30'
+                : 'bg-theme-input text-theme-faint'
               }`}>
               <t.Icon className="w-3.5 h-3.5 md:w-4 md:h-4" />
             </div>
             <div className="text-left">
               <p className="leading-tight text-xs md:text-sm">{t.label}</p>
               <p className={`text-[9px] font-body font-normal mt-0.5 leading-tight hidden md:block
-                ${mainTab === t.id ? 'text-white/35' : 'text-white/20'}`}>
+                ${mainTab === t.id ? 'text-theme-muted' : 'text-theme-faint'}`}>
                 {t.desc}
               </p>
             </div>

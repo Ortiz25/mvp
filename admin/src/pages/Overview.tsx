@@ -29,7 +29,7 @@ function StatCard({ label, value, sub, Icon, color }: {
       <p className={`stat-value ${color.replace(/bg-\S+/, '').replace(/\/\d+/, '').trim()}`}>
         {value}
       </p>
-      {sub && <p className="text-xs text-white/25 font-body mt-1">{sub}</p>}
+      {sub && <p className="text-xs text-theme-faint font-body mt-1">{sub}</p>}
     </div>
   );
 }
@@ -54,13 +54,13 @@ export function Overview() {
   return (
     <div className="page-pad pb-20 lg:pb-6">
       <div>
-        <h2 className="font-display font-extrabold text-xl md:text-2xl text-white mb-0.5">Overview</h2>
-        <p className="text-sm text-white/35 font-body">Real-time captive portal metrics</p>
+        <h2 className="font-display font-extrabold text-xl md:text-2xl text-theme-primary mb-0.5">Overview</h2>
+        <p className="text-sm text-theme-muted font-body">Real-time captive portal metrics</p>
       </div>
 
       {/* Stats grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-        <StatCard label="Total Sessions"  value={stats?.total ?? 0}     sub="all time"          Icon={IconUsers}    color="bg-white/[0.06] text-white" />
+        <StatCard label="Total Sessions"  value={stats?.total ?? 0}     sub="all time"          Icon={IconUsers}    color="bg-theme-input text-theme-primary" />
         <StatCard label="Active Now"       value={stats?.active ?? 0}    sub="with internet"     Icon={IconZap}      color="bg-accent-500/15 text-accent-400" />
         <StatCard label="Completed Portal" value={stats?.completed ?? 0} sub="video + survey"    Icon={IconCheck}    color="bg-info-500/15 text-info-400" />
         <StatCard label="Today"            value={stats?.today ?? 0}     sub="new sessions"      Icon={IconCalendar} color="bg-warning-500/15 text-warning-400" />
@@ -72,8 +72,8 @@ export function Overview() {
         <div className="panel p-5">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <p className="font-display font-bold text-white">Conversion Rate</p>
-              <p className="text-xs text-white/35 font-body mt-0.5">Visitors who complete the portal</p>
+              <p className="font-display font-bold text-theme-primary">Conversion Rate</p>
+              <p className="text-xs text-theme-muted font-body mt-0.5">Visitors who complete the portal</p>
             </div>
             <span className="font-display font-black text-4xl text-gradient-accent">{convRate}%</span>
           </div>
@@ -81,7 +81,7 @@ export function Overview() {
             <div className="h-full rounded-full bg-gradient-to-r from-accent-500 to-cyan-400
               transition-all duration-1000 ease-out" style={{ width: `${convRate}%` }} />
           </div>
-          <div className="flex justify-between mt-2 text-[10px] text-white/25 font-body">
+          <div className="flex justify-between mt-2 text-[10px] text-theme-faint font-body">
             <span>{stats?.completed} completed</span>
             <span>{stats?.total} total</span>
           </div>
@@ -89,7 +89,7 @@ export function Overview() {
 
         {/* Active campaigns */}
         <div className="panel p-5">
-          <p className="text-xs font-display font-bold uppercase tracking-wider text-white/35 mb-3">
+          <p className="text-xs font-display font-bold uppercase tracking-wider text-theme-muted mb-3">
             Active Campaigns
           </p>
           {active.length > 0 ? (
@@ -98,7 +98,7 @@ export function Overview() {
                 <div key={c.id} className="flex items-start justify-between">
                   <div className="min-w-0 flex-1 mr-3">
                     <div className="flex items-center gap-2 mb-1">
-                      <h3 className="font-display font-bold text-white text-[14px] leading-tight truncate">
+                      <h3 className="font-display font-bold text-theme-primary text-[14px] leading-tight truncate">
                         {c.name}
                       </h3>
                       <span className="badge-on shrink-0">
@@ -112,9 +112,9 @@ export function Overview() {
                         { label: 'Granted',  val: c.granted_sessions },
                         { label: 'Duration', val: `${c.session_hours}h` },
                       ].map(({ label, val }) => (
-                        <div key={label} className="text-center px-2.5 py-1.5 rounded-lg bg-white/5">
-                          <p className="font-display font-bold text-sm text-white">{val}</p>
-                          <p className="text-[9px] text-white/30 font-body">{label}</p>
+                        <div key={label} className="text-center px-2.5 py-1.5 rounded-lg bg-theme-input">
+                          <p className="font-display font-bold text-sm text-theme-primary">{val}</p>
+                          <p className="text-[9px] text-theme-faint font-body">{label}</p>
                         </div>
                       ))}
                     </div>
@@ -124,8 +124,8 @@ export function Overview() {
             </div>
           ) : (
             <div className="text-center py-6">
-              <p className="text-sm text-white/35 font-body">No active campaigns</p>
-              <p className="text-xs text-white/20 font-body mt-1">Go to Campaigns to activate one</p>
+              <p className="text-sm text-theme-muted font-body">No active campaigns</p>
+              <p className="text-xs text-theme-faint font-body mt-1">Go to Campaigns to activate one</p>
             </div>
           )}
         </div>
@@ -138,7 +138,7 @@ export function Overview() {
       {campaigns.length > 0 && (
         <div className="panel overflow-hidden">
           <div className="panel-header">
-            <p className="font-display font-bold text-white">All Campaigns</p>
+            <p className="font-display font-bold text-theme-primary">All Campaigns</p>
           </div>
           <div className="tbl-wrap">
           <table className="tbl">
@@ -151,7 +151,7 @@ export function Overview() {
             <tbody>
               {campaigns.map(c => (
                 <tr key={c.id}>
-                  <td className="font-display font-semibold text-white/85">{c.name}</td>
+                  <td className="font-display font-semibold text-theme-secondary">{c.name}</td>
                   <td>{c.active === 1
                     ? <span className="badge-on">Active</span>
                     : <span className="badge-off">Inactive</span>}
@@ -159,7 +159,7 @@ export function Overview() {
                   <td>{c.total_sessions}</td>
                   <td>{c.granted_sessions}</td>
                   <td>{c.session_hours}h</td>
-                  <td className="text-white/40">{new Date(c.created_at).toLocaleDateString()}</td>
+                  <td className="text-theme-muted">{new Date(c.created_at).toLocaleDateString()}</td>
                 </tr>
               ))}
             </tbody>
@@ -182,8 +182,8 @@ function HotspotStatus({ activeCount }: { activeCount: number }) {
             <IconRouter className="w-5 h-5 text-accent-400" />
           </div>
           <div>
-            <p className="font-display font-bold text-white">Captive Portal — Raspberry Pi</p>
-            <p className="text-xs text-white/35 font-body mt-0.5">
+            <p className="font-display font-bold text-theme-primary">Captive Portal — Raspberry Pi</p>
+            <p className="text-xs text-theme-muted font-body mt-0.5">
               CoovaChilli + FreeRADIUS — fully self-contained on-device
             </p>
           </div>
@@ -196,30 +196,30 @@ function HotspotStatus({ activeCount }: { activeCount: number }) {
 
       {/* Stats row */}
       <div className="grid grid-cols-3 gap-3 mb-4">
-        <div className="text-center p-3 rounded-xl bg-white/[0.04] border border-white/[0.06]">
+        <div className="text-center p-3 rounded-xl bg-theme-input border border-theme-subtle">
           <p className="font-display font-bold text-2xl text-accent-400">{activeCount}</p>
-          <p className="text-[10px] text-white/30 font-body mt-0.5">Active sessions</p>
+          <p className="text-[10px] text-theme-faint font-body mt-0.5">Active sessions</p>
         </div>
-        <div className="text-center p-3 rounded-xl bg-white/[0.04] border border-white/[0.06]">
+        <div className="text-center p-3 rounded-xl bg-theme-input border border-theme-subtle">
           <div className="flex items-center justify-center gap-1.5 mb-1">
             <IconWifi className="w-4 h-4 text-info-400" />
           </div>
-          <p className="text-[10px] text-white/30 font-body">CoovaChilli</p>
-          <p className="text-[9px] text-white/20 font-body">Session gateway</p>
+          <p className="text-[10px] text-theme-faint font-body">CoovaChilli</p>
+          <p className="text-[9px] text-theme-faint font-body">Session gateway</p>
         </div>
-        <div className="text-center p-3 rounded-xl bg-white/[0.04] border border-white/[0.06]">
+        <div className="text-center p-3 rounded-xl bg-theme-input border border-theme-subtle">
           <div className="flex items-center justify-center gap-1.5 mb-1">
             <IconPlay className="w-4 h-4 text-accent-400" />
           </div>
-          <p className="text-[10px] text-white/30 font-body">PM2 managed</p>
-          <p className="text-[9px] text-white/20 font-body">Auto-restarts on boot</p>
+          <p className="text-[10px] text-theme-faint font-body">PM2 managed</p>
+          <p className="text-[9px] text-theme-faint font-body">Auto-restarts on boot</p>
         </div>
       </div>
 
       {/* How it works */}
       <div className="flex items-start gap-2 bg-info-500/[0.05] border border-info-500/15 rounded-xl p-3">
         <IconInfo className="w-4 h-4 text-info-400 shrink-0 mt-0.5" />
-        <p className="text-[11px] text-white/40 font-body leading-relaxed">
+        <p className="text-[11px] text-theme-muted font-body leading-relaxed">
           All session control runs on the Pi — CoovaChilli handles MAC-level access grants,
           FreeRADIUS manages authentication, and this backend issues chilli_query commands directly.
           No external router API required.

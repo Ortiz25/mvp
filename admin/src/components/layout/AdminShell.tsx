@@ -103,7 +103,7 @@ export function AdminShell({ tab, onTab, onLogout, children }: Props) {
         ].join(' ')}>
           <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-accent-500 to-cyan-500
             flex items-center justify-center shrink-0 shadow-[0_4px_16px_rgba(16,185,129,0.3)]">
-            <IconShield className="w-4 h-4 text-white" />
+            <IconShield className="w-4 h-4 text-theme-primary" />
           </div>
           <div className={['min-w-0 overflow-hidden', sidebarCollapsed ? 'lg:hidden' : ''].join(' ')}>
             <p className="font-display font-bold text-sm leading-tight truncate" style={{ color: 'var(--text-primary)' }}>CityNet Admin</p>
@@ -133,7 +133,7 @@ export function AdminShell({ tab, onTab, onLogout, children }: Props) {
                   'text-xs font-display font-semibold whitespace-nowrap z-50 shadow-xl',
                   'opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150',
                   isDark
-                    ? 'bg-surface-700 border border-white/10 text-white'
+                    ? 'bg-surface-700 border border-white/10 text-theme-primary'
                     : 'bg-white border border-black/10 text-gray-800 shadow-lg',
                 ].join(' ')}>
                   {label}
@@ -191,8 +191,8 @@ export function AdminShell({ tab, onTab, onLogout, children }: Props) {
               className={[
                 'lg:hidden flex items-center justify-center w-9 h-9 rounded-xl transition-all duration-150 shrink-0',
                 isDark
-                  ? 'bg-white/[0.05] border border-white/[0.08] text-white/60 hover:text-white hover:bg-white/10'
-                  : 'bg-black/[0.04] border border-black/[0.08] text-gray-500 hover:text-gray-900 hover:bg-black/[0.07]',
+                  ? 'bg-white/[0.05] border border-white/[0.08] text-theme-faint hover:text-theme-primary hover:bg-white/10'
+                  : 'bg-black/[0.04] border border-black/[0.08] text-theme-muted hover:text-theme-primary hover:bg-black/[0.07]',
               ].join(' ')}
             >
               <IconMenu open={mobileOpen} className="w-[18px] h-[18px]" />
@@ -249,7 +249,7 @@ export function AdminShell({ tab, onTab, onLogout, children }: Props) {
               className={[
                 'flex flex-col items-center justify-center gap-1 flex-1 py-2.5 px-1',
                 'transition-colors duration-150 relative',
-                tab === id ? 'text-accent-400' : 'text-white/30',
+                tab === id ? 'text-accent-400' : 'text-theme-faint',
               ].join(' ')}
             >
               {tab === id && (
@@ -260,7 +260,7 @@ export function AdminShell({ tab, onTab, onLogout, children }: Props) {
                 tab === id ? 'scale-110' : ''].join(' ')} />
               <span className={[
                 'text-[9px] font-display font-bold uppercase tracking-wider',
-                tab === id ? 'text-accent-400' : 'text-white/25',
+                tab === id ? 'text-accent-400' : 'text-theme-faint',
               ].join(' ')}>
                 {label}
               </span>
