@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, Stats, Campaign } from '../lib/api';
+// Note: MikroTik integration removed — session control is handled entirely by CoovaChilli on the Pi
 
 // ── SVG icons ──────────────────────────────────────────────────────────────
 type IP = { className?: string };
@@ -170,14 +171,6 @@ export function Overview() {
 
 // ── Hotspot status widget ──────────────────────────────────────────────────
 function HotspotStatus({ activeCount }: { activeCount: number }) {
-  const [status, setStatus] = useState<{ ok: boolean; mode?: string; error?: string } | null>(null);
-
-  useEffect(() => {
-    api.mikrotik()
-      .then(() => setStatus({ ok: true, mode: 'hotspot' }))
-      .catch(() => setStatus({ ok: false, error: 'Unreachable' }));
-  }, []);
-
   return (
     <div className="panel p-5">
       <div className="flex items-start justify-between mb-4">
@@ -187,21 +180,16 @@ function HotspotStatus({ activeCount }: { activeCount: number }) {
             <IconRouter className="w-5 h-5 text-accent-400" />
           </div>
           <div>
-            <p className="font-display font-bold text-white">MikroTik Hotspot</p>
+            <p className="font-display font-bold text-white">Captive Portal — Raspberry Pi</p>
             <p className="text-xs text-white/35 font-body mt-0.5">
-              Browser-redirect model — no API credentials required
+              CoovaChilli + FreeRADIUS — fully self-contained on-device
             </p>
           </div>
         </div>
-        <div className="shrink-0 mt-1">
-          {status === null ? (
-            <div className="w-5 h-5 rounded-full border-2 border-accent-500/30 border-t-accent-500 animate-spin" />
-          ) : status.ok ? (
-            <span className="badge-on">Reachable</span>
-          ) : (
-            <span className="badge-off">Unreachable</span>
-          )}
-        </div>
+        <span className="badge-on shrink-0 mt-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-accent-400 animate-pulse" />
+          Running
+        </span>
       </div>
 
       {/* Stats row */}
@@ -214,15 +202,15 @@ function HotspotStatus({ activeCount }: { activeCount: number }) {
           <div className="flex items-center justify-center gap-1.5 mb-1">
             <IconWifi className="w-4 h-4 text-info-400" />
           </div>
-          <p className="text-[10px] text-white/30 font-body">Native sessions</p>
-          <p className="text-[9px] text-white/20 font-body">RouterOS managed</p>
+          <p className="text-[10px] text-white/30 font-body">CoovaChilli</p>
+          <p className="text-[9px] text-white/20 font-body">Session gateway</p>
         </div>
         <div className="text-center p-3 rounded-xl bg-white/[0.04] border border-white/[0.06]">
           <div className="flex items-center justify-center gap-1.5 mb-1">
             <IconPlay className="w-4 h-4 text-accent-400" />
           </div>
-          <p className="text-[10px] text-white/30 font-body">Survive reboots</p>
-          <p className="text-[9px] text-white/20 font-body">No resync needed</p>
+          <p className="text-[10px] text-white/30 font-body">PM2 managed</p>
+          <p className="text-[9px] text-white/20 font-body">Auto-restarts on boot</p>
         </div>
       </div>
 
@@ -230,8 +218,9 @@ function HotspotStatus({ activeCount }: { activeCount: number }) {
       <div className="flex items-start gap-2 bg-info-500/[0.05] border border-info-500/15 rounded-xl p-3">
         <IconInfo className="w-4 h-4 text-info-400 shrink-0 mt-0.5" />
         <p className="text-[11px] text-white/40 font-body leading-relaxed">
-          Sessions are authenticated via browser redirect to the MikroTik Hotspot login URL.
-          The router manages session state natively — no address-list, no API calls, no reboot issues.
+          All session control runs on the Pi — CoovaChilli handles MAC-level access grants,
+          FreeRADIUS manages authentication, and this backend issues chilli_query commands directly.
+          No external router API required.
         </p>
       </div>
     </div>

@@ -39,6 +39,7 @@ async function notifyChilliLoggedin() {
   try { await fetch('http://192.168.182.1:3990/loggedin', { mode: 'no-cors', cache: 'no-cache' }); } catch {}
 }
 
+
 const fmt2 = (n: number) => String(n).padStart(2, '0');
 const fmtGrace = (ms: number) => { const s = Math.ceil(ms / 1000); return `${Math.floor(s / 60)}:${fmt2(s % 60)}`; };
 
@@ -62,6 +63,10 @@ export function ConnectingPage() {
   const [tl,                setTl]                = useState<ReturnType<typeof calcTimeLeft> | null>(null);
   const [graceMs,           setGraceMs]           = useState(0);
   const [showApps,          setShowApps]          = useState(false);
+  // internetConfirmed: true when the backend confirms accessGranted+active.
+  // We trust the backend — chilli_query authorize is authoritative.
+  // No client-side network probe needed; probes fail on Chrome Android due to
+  // Private Network Access / mixed-content restrictions on captive portal pages.
   const [internetConfirmed, setInternetConfirmed] = useState(false);
   const [probing,           setProbing]           = useState(false);
   const [probeFailed,       setProbeFailed]       = useState(false);
@@ -81,31 +86,22 @@ export function ConnectingPage() {
     setTimeout(notifyChilliLoggedin, 600);
   }, []);
 
-  // Auto-probe connectivity once the phase becomes active.
-  // Opens "Start Browsing" button until confirmed, then swaps to session-active card.
+  // When the backend confirms active=true, trust it immediately.
+  // chilli_query authorize is authoritative — no client-side network probe.
+  // Probes via fetch() fail on Chrome Android on captive portal pages due to
+  // Private Network Access restrictions, causing false "not online" results.
   useEffect(() => {
-    if (phase !== 'active' || probeRan.current || internetConfirmed) return;
-    probeRan.current = true;
-    setProbing(true);
-    setProbeFailed(false);
-    const run = async () => {
-      await new Promise(r => setTimeout(r, 1000)); // let iptables settle
-      for (let i = 0; i < 8; i++) {
-        try {
-          await fetch('https://www.google.com/generate_204', {
-            mode: 'no-cors', cache: 'no-cache',
-            signal: AbortSignal.timeout(3000),
-          });
-          setInternetConfirmed(true);
-          setProbing(false);
-          return;
-        } catch { await new Promise(r => setTimeout(r, 800)); }
+
+    const id = setInterval(() => {
+      if (phase === 'active' && status?.active && status?.accessGranted) {
+        setInternetConfirmed(true);
+        setProbing(false);
+        setProbeFailed(false);
       }
-      setProbing(false);
-      setProbeFailed(true);
-    };
-    run();
-  }, [phase, internetConfirmed]);
+    }, 5000);
+    return () => clearInterval(id);
+   
+  }, [phase, status]);
 
   // Restore grace period on reload — if sessionStorage has a pending grace
   // expiry for this MAC, jump straight to grace screen
@@ -328,47 +324,22 @@ export function ConnectingPage() {
       {/* Start Browsing (before internet confirmed) → Session Active card (after) */}
       {!internetConfirmed ? (
         <button
-          disabled={probing}
+          disabled={false}
           onClick={() => {
-            if (probing) return;
-            setProbeFailed(false);
-            setProbing(true);
-            probeRan.current = false; // allow re-probe
+            // Open browser directly — backend has confirmed access via chilli_query.
+            // We open about:blank synchronously (required to bypass popup blocker)
+            // then navigate it. A small delay lets iptables fully settle.
             const tab = window.open('about:blank', '_blank');
-            const run = async () => {
-              await new Promise(r => setTimeout(r, 800));
-              for (let i = 0; i < 8; i++) {
-                try {
-                  await fetch('https://www.google.com/generate_204', {
-                    mode: 'no-cors', cache: 'no-cache',
-                    signal: AbortSignal.timeout(3000),
-                  });
-                  setInternetConfirmed(true);
-                  setProbing(false);
-                  if (tab && !tab.closed) tab.location.href = 'https://google.com';
-                  return;
-                } catch { await new Promise(r => setTimeout(r, 800)); }
-              }
-              setProbing(false);
-              setProbeFailed(true);
-              if (tab && !tab.closed) tab.close();
-            };
-            run();
+            setTimeout(() => {
+              if (tab && !tab.closed) tab.location.href = 'https://google.com';
+              setInternetConfirmed(true);
+            }, 800);
           }}
           className="w-full py-4 rounded-xl font-display font-bold text-base
             bg-gradient-to-r from-signal to-aqua text-void shadow-lg shadow-signal/20
             active:scale-[0.98] transition-all duration-150
             disabled:opacity-60 disabled:cursor-wait">
-          {probing ? (
-            <span className="flex items-center justify-center gap-2">
-              <span className="w-4 h-4 rounded-full border-2 border-void/40 border-t-void animate-spin"/>
-              Checking connection…
-            </span>
-          ) : probeFailed ? (
-            <span>⚠ Not online yet — tap to retry</span>
-          ) : (
-            <span>Start Browsing →</span>
-          )}
+          <span>Start Browsing →</span>
         </button>
       ) : (
         /* ── Session Active card — shown once internet is confirmed ── */
@@ -397,7 +368,7 @@ export function ConnectingPage() {
                 Internet Active
               </p>
               <p className="text-[11px] text-white/50 font-body">
-                Open any app or browser to start browsing
+                If not, Reload this Page !!
               </p>
             </div>
             {/* Live indicator */}

@@ -120,6 +120,7 @@ export function Sessions() {
   const [campaigns,     setCampaigns]     = useState<Campaign[]>([]);
   const [filterCampaign, setFilterCampaign] = useState('');
   const [filterStatus,  setFilterStatus]  = useState<FilterStatus>('');
+  const [search,        setSearch]        = useState('');
   const [loading,       setLoading]       = useState(true);
   const [revoking,      setRevoking]      = useState<string | null>(null);
 
@@ -137,10 +138,17 @@ export function Sessions() {
 
   useEffect(() => { load(); }, []);
 
-  // Apply both filters
+  // Apply all filters
+  const q = search.trim().toLowerCase();
   const filtered = sessions.filter(s => {
     if (filterCampaign && s.campaign_id !== filterCampaign) return false;
     if (filterStatus   && getSessionStatus(s) !== filterStatus) return false;
+    if (q) {
+      const mac      = (s.mac_address  ?? '').toLowerCase();
+      const ip       = (s.ip_address   ?? '').toLowerCase();
+      const campaign = (s.campaign_name ?? '').toLowerCase();
+      if (!mac.includes(q) && !ip.includes(q) && !campaign.includes(q)) return false;
+    }
     return true;
   });
 
@@ -170,7 +178,29 @@ export function Sessions() {
           <h2 className="font-display font-extrabold text-2xl text-white mb-0.5">Sessions</h2>
           <p className="text-sm text-white/35 font-body">All portal sessions and their status</p>
         </div>
-        <div className="flex gap-2 flex-wrap">
+        <div className="flex gap-2 flex-wrap items-center">
+          {/* Search box */}
+          <div className="relative">
+            <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/25 pointer-events-none"
+              viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
+              strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input
+              type="text"
+              placeholder="Search MAC, IP or campaign…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="select text-sm py-1.5 pl-8 pr-3 w-56 placeholder:text-white/20"
+            />
+            {search && (
+              <button
+                onClick={() => setSearch('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 transition-colors">
+                ✕
+              </button>
+            )}
+          </div>
           {/* Status summary pills */}
           {(['active', 'expired', 'revoked', 'pending'] as FilterStatus[]).map(st => (
             <button
@@ -204,7 +234,7 @@ export function Sessions() {
           title={sessions.length === 0 ? 'No sessions yet' : 'No sessions match this filter'}
           sub={sessions.length === 0
             ? 'Sessions appear here as users connect to the portal'
-            : 'Try clearing the filter to see all sessions'} />
+            : 'Try clearing the search or filters to see all sessions'} />
       ) : (
         <div className="panel overflow-hidden">
           <table className="tbl">
