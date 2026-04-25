@@ -1,4 +1,6 @@
 import { ReactNode, useState, useEffect, useRef } from 'react';
+import { ThemeToggle } from '../ThemeToggle';
+import { useTheme } from '../../context/ThemeContext';
 
 // ── SVG icon set ───────────────────────────────────────────────────────────
 type IP = { className?: string };
@@ -39,6 +41,7 @@ interface Props {
 export function AdminShell({ tab, onTab, onLogout, children }: Props) {
   const [desktopOpen, setDesktopOpen] = useState(true);
   const [mobileOpen,  setMobileOpen]  = useState(false);
+  const { isDark } = useTheme();
   const _sidebarRef = useRef<HTMLElement>(null);
 
   // Close on Escape key
@@ -81,8 +84,8 @@ export function AdminShell({ tab, onTab, onLogout, children }: Props) {
         ref={_sidebarRef}
         className={[
           'fixed inset-y-0 left-0 z-40 flex flex-col shrink-0',
-          'bg-surface-900 border-r border-white/[0.05]',
-          'transition-all duration-300 ease-in-out',
+          isDark ? 'bg-surface-900 border-white/[0.05]' : 'bg-white border-black/[0.07]',
+          'border-r transition-all duration-300 ease-in-out',
           // Mobile: slide from left
           mobileOpen ? 'translate-x-0' : '-translate-x-full',
           // Desktop: always visible, width changes
@@ -94,16 +97,17 @@ export function AdminShell({ tab, onTab, onLogout, children }: Props) {
       >
         {/* Logo row */}
         <div className={[
-          'flex items-center gap-3 px-4 py-5 border-b border-white/[0.05] shrink-0',
+          'flex items-center gap-3 px-4 py-5 shrink-0',
+          isDark ? 'border-b border-white/[0.05]' : 'border-b border-black/[0.06]',
           sidebarCollapsed ? 'lg:justify-center lg:px-2' : '',
         ].join(' ')}>
           <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-accent-500 to-cyan-500
             flex items-center justify-center shrink-0 shadow-[0_4px_16px_rgba(16,185,129,0.3)]">
-            <IconShield className="w-4 h-4 text-surface-950" />
+            <IconShield className="w-4 h-4 text-white" />
           </div>
           <div className={['min-w-0 overflow-hidden', sidebarCollapsed ? 'lg:hidden' : ''].join(' ')}>
-            <p className="font-display font-bold text-sm text-white leading-tight truncate">CityNet Admin</p>
-            <p className="text-[9px] font-body text-white/25 uppercase tracking-wider">Dashboard</p>
+            <p className="font-display font-bold text-sm leading-tight truncate" style={{ color: 'var(--text-primary)' }}>CityNet Admin</p>
+            <p className="text-[9px] font-body uppercase tracking-wider" style={{ color: 'var(--text-faint)' }}>Dashboard</p>
           </div>
         </div>
 
@@ -124,10 +128,14 @@ export function AdminShell({ tab, onTab, onLogout, children }: Props) {
               <span className={sidebarCollapsed ? 'lg:hidden' : ''}>{label}</span>
               {/* Collapsed tooltip */}
               {sidebarCollapsed && (
-                <span className="hidden lg:block absolute left-full ml-3 px-2.5 py-1.5 rounded-lg
-                  bg-surface-700 border border-white/10 text-xs font-display font-semibold text-white
-                  opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150
-                  whitespace-nowrap z-50 shadow-xl">
+                <span className={[
+                  'hidden lg:block absolute left-full ml-3 px-2.5 py-1.5 rounded-lg',
+                  'text-xs font-display font-semibold whitespace-nowrap z-50 shadow-xl',
+                  'opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150',
+                  isDark
+                    ? 'bg-surface-700 border border-white/10 text-white'
+                    : 'bg-white border border-black/10 text-gray-800 shadow-lg',
+                ].join(' ')}>
                   {label}
                 </span>
               )}
@@ -136,7 +144,7 @@ export function AdminShell({ tab, onTab, onLogout, children }: Props) {
         </nav>
 
         {/* Bottom */}
-        <div className="p-2 border-t border-white/[0.05] space-y-0.5 shrink-0">
+        <div className={['p-2 space-y-0.5 shrink-0', isDark ? 'border-t border-white/[0.05]' : 'border-t border-black/[0.06]'].join(' ')}>
           {/* Desktop-only collapse toggle */}
           <button
             onClick={() => setDesktopOpen(s => !s)}
@@ -167,33 +175,44 @@ export function AdminShell({ tab, onTab, onLogout, children }: Props) {
       <div className="flex-1 flex flex-col min-h-screen min-w-0 overflow-hidden">
 
         {/* Top bar */}
-        <header className="sticky top-0 z-20 bg-surface-950/80 backdrop-blur-xl
-          border-b border-white/[0.05] px-4 md:px-6 py-3
-          flex items-center justify-between gap-3 shrink-0">
+        <header className={[
+          'sticky top-0 z-20 backdrop-blur-xl px-4 md:px-6 py-3',
+          'flex items-center justify-between gap-3 shrink-0',
+          isDark
+            ? 'bg-surface-950/80 border-b border-white/[0.05]'
+            : 'bg-white/80 border-b border-black/[0.06]',
+        ].join(' ')}>
 
           <div className="flex items-center gap-3 min-w-0">
             {/* Hamburger — mobile only */}
             <button
               onClick={() => setMobileOpen(s => !s)}
               aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
-              className="lg:hidden flex items-center justify-center w-9 h-9 rounded-xl
-                bg-white/[0.05] border border-white/[0.08] text-white/60
-                hover:text-white hover:bg-white/10 transition-all duration-150 shrink-0"
+              className={[
+                'lg:hidden flex items-center justify-center w-9 h-9 rounded-xl transition-all duration-150 shrink-0',
+                isDark
+                  ? 'bg-white/[0.05] border border-white/[0.08] text-white/60 hover:text-white hover:bg-white/10'
+                  : 'bg-black/[0.04] border border-black/[0.08] text-gray-500 hover:text-gray-900 hover:bg-black/[0.07]',
+              ].join(' ')}
             >
               <IconMenu open={mobileOpen} className="w-[18px] h-[18px]" />
             </button>
 
             {/* Page title */}
             <div className="flex items-center gap-2 min-w-0">
-              {currentNav && <currentNav.Icon className="w-4 h-4 text-white/35 shrink-0" />}
-              <h1 className="font-display font-bold text-white text-sm md:text-base leading-none truncate">
+              {currentNav && (
+                <currentNav.Icon className="w-4 h-4 shrink-0" style={{ color: 'var(--text-muted)' }} />
+              )}
+              <h1 className="font-display font-bold text-sm md:text-base leading-none truncate"
+                style={{ color: 'var(--text-primary)' }}>
                 {currentNav?.label ?? tab}
               </h1>
             </div>
           </div>
 
-          {/* Status pill */}
-          <div className="shrink-0">
+          {/* Right side: status pill + theme toggle */}
+          <div className="flex items-center gap-2.5 shrink-0">
+            {/* Hotspot status */}
             <div className="flex items-center gap-1.5 bg-accent-500/10 border border-accent-500/20
               rounded-full px-2.5 py-1.5 md:px-3">
               <span className="w-1.5 h-1.5 rounded-full bg-accent-400 animate-pulse" />
@@ -202,18 +221,25 @@ export function AdminShell({ tab, onTab, onLogout, children }: Props) {
                 Hotspot
               </span>
             </div>
+
+            {/* Theme toggle */}
+            <ThemeToggle />
           </div>
         </header>
 
         {/* Page content — scrollable */}
-        <main className="flex-1 overflow-auto">
+        <main className="flex-1 overflow-auto" style={{ background: 'var(--bg-app)' }}>
           {children}
         </main>
 
         {/* Mobile bottom nav */}
-        <nav className="lg:hidden sticky bottom-0 z-20 shrink-0
-          bg-surface-900/95 backdrop-blur-xl border-t border-white/[0.05]
-          flex items-stretch justify-around">
+        <nav className={[
+          'lg:hidden sticky bottom-0 z-20 shrink-0 backdrop-blur-xl',
+          'flex items-stretch justify-around',
+          isDark
+            ? 'bg-surface-900/95 border-t border-white/[0.05]'
+            : 'bg-white/95 border-t border-black/[0.06]',
+        ].join(' ')}>
           {NAV.map(({ id, Icon, label }) => (
             <button
               key={id}

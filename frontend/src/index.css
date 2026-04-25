@@ -4,29 +4,127 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Dark mode (default) ── */
+:root, .dark {
+  --bg-void:        #040b14;
+  --bg-night:       #070f1c;
+  --bg-card:        rgba(4,11,20,0.95);
+  --bg-surface:     rgba(255,255,255,0.03);
+  --bg-raised:      rgba(255,255,255,0.05);
+  --bg-input:       rgba(255,255,255,0.04);
+  --bg-hover:       rgba(255,255,255,0.06);
+
+  --border-card:    rgba(255,255,255,0.07);
+  --border-surface: rgba(255,255,255,0.07);
+  --border-raised:  rgba(255,255,255,0.10);
+  --border-input:   rgba(255,255,255,0.09);
+  --border-input-h: rgba(255,255,255,0.18);
+  --border-tab:     rgba(255,255,255,0.06);
+
+  --text-primary:   #ffffff;
+  --text-secondary: rgba(255,255,255,0.65);
+  --text-muted:     rgba(255,255,255,0.35);
+  --text-faint:     rgba(255,255,255,0.20);
+  --text-tab:       rgba(255,255,255,0.25);
+  --text-tab-hover: rgba(255,255,255,0.50);
+
+  --tab-bar-bg:     rgba(4,11,20,0.85);
+  --header-bg:      rgba(255,255,255,0.03);
+  --step-bar-bg:    rgba(7,15,28,0.40);
+
+  --opt-border:     rgba(255,255,255,0.09);
+  --opt-bg:         rgba(255,255,255,0.025);
+  --opt-text:       rgba(255,255,255,0.65);
+  --opt-hover-b:    rgba(255,255,255,0.18);
+  --opt-hover-bg:   rgba(255,255,255,0.05);
+  --opt-hover-t:    #ffffff;
+
+  --campaign-border: rgba(255,255,255,0.07);
+  --campaign-bg:     rgba(255,255,255,0.025);
+  --campaign-hov-b:  rgba(255,255,255,0.13);
+  --campaign-hov-bg: rgba(255,255,255,0.045);
+
+  --prog-track:     rgba(255,255,255,0.08);
+
+  --atm-top:   rgba(0,210,160,0.06);
+  --atm-bot:   rgba(0,180,255,0.03);
+  --atm-grid:  rgba(255,255,255,0.6);
+
+  --footer-text: rgba(255,255,255,0.10);
+
+  --scrollbar: rgba(255,255,255,0.08);
+}
+
+/* ── Light mode ── */
+.light {
+  --bg-void:        #f0f4f8;
+  --bg-night:       #e8edf3;
+  --bg-card:        rgba(255,255,255,0.97);
+  --bg-surface:     rgba(0,0,0,0.025);
+  --bg-raised:      rgba(0,0,0,0.04);
+  --bg-input:       rgba(0,0,0,0.035);
+  --bg-hover:       rgba(0,0,0,0.05);
+
+  --border-card:    rgba(0,0,0,0.09);
+  --border-surface: rgba(0,0,0,0.07);
+  --border-raised:  rgba(0,0,0,0.10);
+  --border-input:   rgba(0,0,0,0.11);
+  --border-input-h: rgba(0,0,0,0.22);
+  --border-tab:     rgba(0,0,0,0.06);
+
+  --text-primary:   #0d1117;
+  --text-secondary: #374151;
+  --text-muted:     #6b7280;
+  --text-faint:     #9ca3af;
+  --text-tab:       #9ca3af;
+  --text-tab-hover: #4b5563;
+
+  --tab-bar-bg:     rgba(248,250,252,0.92);
+  --header-bg:      rgba(0,0,0,0.02);
+  --step-bar-bg:    rgba(232,237,243,0.60);
+
+  --opt-border:     rgba(0,0,0,0.10);
+  --opt-bg:         rgba(0,0,0,0.025);
+  --opt-text:       #374151;
+  --opt-hover-b:    rgba(0,0,0,0.18);
+  --opt-hover-bg:   rgba(0,0,0,0.04);
+  --opt-hover-t:    #0d1117;
+
+  --campaign-border: rgba(0,0,0,0.08);
+  --campaign-bg:     rgba(0,0,0,0.02);
+  --campaign-hov-b:  rgba(0,0,0,0.14);
+  --campaign-hov-bg: rgba(0,0,0,0.04);
+
+  --prog-track:     rgba(0,0,0,0.08);
+
+  --atm-top:   rgba(0,210,160,0.05);
+  --atm-bot:   rgba(0,180,255,0.03);
+  --atm-grid:  rgba(0,0,0,0.3);
+
+  --footer-text: rgba(0,0,0,0.18);
+
+  --scrollbar: rgba(0,0,0,0.12);
+}
+
 @layer base {
   *, *::before, *::after { box-sizing: border-box; }
   html { -webkit-tap-highlight-color: transparent; scroll-behavior: smooth; }
   body {
-    background-color: #040b14;
-    background-image:
-      radial-gradient(ellipse 120% 60% at 50% -5%, rgba(0,210,160,0.07) 0%, transparent 55%),
-      radial-gradient(ellipse 50% 50% at 90% 90%, rgba(0,180,255,0.04) 0%, transparent 60%);
-    color: #ffffff;
+    background-color: var(--bg-void);
+    color: var(--text-primary);
     font-family: 'Inter', sans-serif;
     -webkit-font-smoothing: antialiased;
+    transition: background-color 0.3s ease, color 0.3s ease;
   }
   ::-webkit-scrollbar { width: 3px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 99px; }
+  ::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 99px; }
 }
 
 @layer components {
-  /* Surfaces */
-  .surface        { @apply bg-white/[0.03] border border-white/[0.07] rounded-2xl; }
-  .surface-raised { @apply bg-white/[0.05] border border-white/[0.10] rounded-2xl; }
+  .surface        { background: var(--bg-surface); border: 1px solid var(--border-surface); border-radius: 1rem; }
+  .surface-raised { background: var(--bg-raised);  border: 1px solid var(--border-raised);  border-radius: 1rem; }
 
-  /* Primary button — no custom color @apply, use inline style in TSX for gradient */
   .btn-primary {
     @apply w-full py-[14px] rounded-xl font-bold text-[15px] tracking-tight
            cursor-pointer border-none transition-all duration-200
@@ -39,14 +137,16 @@
   }
   .btn-primary:hover:not(:disabled) { box-shadow: 0 8px 32px rgba(0,210,160,0.38); }
   .btn-primary:disabled {
-    background: rgba(255,255,255,0.08);
-    color: rgba(255,255,255,0.20);
+    background: var(--bg-raised);
+    color: var(--text-faint);
   }
 
-  /* Tab bar */
   .tab-bar {
-    @apply flex border-t border-white/[0.06] backdrop-blur-xl;
-    background-color: rgba(4,11,20,0.85);
+    display: flex;
+    border-top: 1px solid var(--border-tab);
+    backdrop-filter: blur(20px);
+    background-color: var(--tab-bar-bg);
+    transition: background-color 0.3s ease;
   }
   .tab-item {
     @apply flex-1 flex flex-col items-center justify-center gap-1 py-3
@@ -54,12 +154,11 @@
            cursor-pointer transition-all duration-200
            border-none bg-transparent;
     font-family: 'Bricolage Grotesque', sans-serif;
-    color: rgba(255,255,255,0.25);
+    color: var(--text-tab);
   }
-  .tab-item:hover { color: rgba(255,255,255,0.50); }
+  .tab-item:hover { color: var(--text-tab-hover); }
   .tab-item-active { color: #00d2a0; }
 
-  /* Step nodes */
   .step-node {
     @apply w-7 h-7 rounded-full flex items-center justify-center
            text-[10px] font-bold transition-all duration-300;
@@ -67,15 +166,18 @@
   }
   .step-done    { background: #00d2a0; color: #040b14; box-shadow: 0 0 12px rgba(0,210,160,0.5); }
   .step-current { background: #ffffff; color: #040b14; box-shadow: 0 0 10px rgba(255,255,255,0.25); }
-  .step-future  { @apply border border-white/15 text-white/20; }
+  .step-future  { border: 1px solid var(--border-input); color: var(--text-faint); }
 
-  /* Campaign cards */
   .campaign-card {
-    @apply w-full text-left rounded-2xl border cursor-pointer
+    @apply w-full text-left rounded-2xl cursor-pointer
            transition-all duration-200 overflow-hidden
-           border-white/[0.07] bg-white/[0.025]
-           hover:bg-white/[0.045] hover:border-white/[0.13]
            active:scale-[0.99] focus:outline-none;
+    border: 1px solid var(--campaign-border);
+    background: var(--campaign-bg);
+  }
+  .campaign-card:hover {
+    background: var(--campaign-hov-bg);
+    border-color: var(--campaign-hov-b);
   }
   .campaign-card-selected {
     border-color: rgba(0,210,160,0.50);
@@ -83,15 +185,20 @@
     box-shadow: 0 0 0 1px rgba(0,210,160,0.18), 0 8px 24px rgba(0,210,160,0.09);
   }
 
-  /* Survey options */
   .opt-btn {
     @apply w-full text-left px-4 py-3.5 rounded-xl border-[1.5px]
            text-sm transition-all duration-150 cursor-pointer bg-transparent;
     font-family: 'Inter', sans-serif;
   }
   .opt-idle {
-    @apply border-white/[0.09] bg-white/[0.025] text-white/65
-           hover:border-white/[0.18] hover:bg-white/[0.05] hover:text-white;
+    border-color: var(--opt-border);
+    background: var(--opt-bg);
+    color: var(--opt-text);
+  }
+  .opt-idle:hover {
+    border-color: var(--opt-hover-b);
+    background: var(--opt-hover-bg);
+    color: var(--opt-hover-t);
   }
   .opt-selected {
     border-color: #00d2a0;
@@ -101,21 +208,18 @@
     box-shadow: 0 0 0 1px rgba(0,210,160,0.25);
   }
 
-  /* App tile */
   .app-tile {
-    @apply relative flex flex-col gap-2.5 p-4 rounded-2xl border cursor-pointer
+    @apply relative flex flex-col gap-2.5 p-4 rounded-2xl cursor-pointer
            transition-all duration-200 text-left overflow-hidden no-underline
            active:scale-[0.97];
   }
 
-  /* Progress */
-  .prog-track { @apply h-1 rounded-full bg-white/[0.08] overflow-hidden; }
-  .prog-fill  {
+  .prog-track { height: 0.25rem; border-radius: 999px; overflow: hidden; background: var(--prog-track); }
+  .prog-fill {
     @apply h-full rounded-full transition-all duration-500 ease-out;
     background: linear-gradient(to right, #00d2a0, #00b4ff);
   }
 
-  /* Chips */
   .chip {
     @apply inline-flex items-center gap-1.5 text-[10px] font-bold
            uppercase tracking-wider px-2.5 py-1 rounded-full border;
@@ -123,7 +227,7 @@
   }
   .chip-live  { background: rgba(0,210,160,0.10); border-color: rgba(0,210,160,0.25); color: #00d2a0; }
   .chip-info  { background: rgba(0,180,255,0.10); border-color: rgba(0,180,255,0.25); color: #00b4ff; }
-  .chip-muted { @apply bg-white/[0.04] border-white/[0.09] text-white/30; }
+  .chip-muted { background: var(--bg-surface); border-color: var(--border-surface); color: var(--text-faint); }
 }
 
 @layer utilities {
@@ -135,7 +239,6 @@
   }
   .glow-signal { box-shadow: 0 0 32px rgba(0,210,160,0.3); }
   .glow-aqua   { box-shadow: 0 0 32px rgba(0,180,255,0.3); }
-
   .anim-d1 { animation-delay:  60ms; }
   .anim-d2 { animation-delay: 120ms; }
   .anim-d3 { animation-delay: 180ms; }

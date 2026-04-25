@@ -1,6 +1,7 @@
 // src/App.tsx
 import { useState, useEffect } from 'react';
 import { api, getToken, clearToken } from './lib/api';
+import { ThemeProvider } from './context/ThemeContext';
 import { Login }           from './pages/Login';
 import { AdminShell }      from './components/layout/AdminShell';
 import { Overview }        from './pages/Overview';
@@ -8,12 +9,11 @@ import { CampaignManager } from './pages/CampaignManager';
 import { Sessions }  from './pages/Sessions';
 import { Analytics } from './pages/Analytics';
 
-export default function App() {
+function AdminApp() {
   const [authed, setAuthed] = useState(false);
   const [tab, setTab] = useState('overview');
   const [checking, setChecking] = useState(true);
 
-  // Auto-login if token stored
   useEffect(() => {
     const t = getToken();
     if (!t) { setChecking(false); return; }
@@ -23,7 +23,7 @@ export default function App() {
   const logout = () => { clearToken(); setAuthed(false); };
 
   if (checking) return (
-    <div className="min-h-screen flex items-center justify-center">
+    <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg-app)' }}>
       <div className="w-8 h-8 rounded-full border-2 border-accent-500 border-t-transparent animate-spin" />
     </div>
   );
@@ -37,5 +37,13 @@ export default function App() {
       {tab === 'sessions'  && <Sessions />}
       {tab === 'analytics' && <Analytics />}
     </AdminShell>
+  );
+}
+
+export default function App() {
+  return (
+    <ThemeProvider>
+      <AdminApp />
+    </ThemeProvider>
   );
 }

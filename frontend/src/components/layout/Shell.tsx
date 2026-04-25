@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { usePortal } from '../../context/SessionContext';
 import { portalApi } from '../../lib/api';
+import { useTheme } from '../../context/ThemeContext';
 
 type IconProps = { className?: string };
 export const IconWifi         = ({ className = 'w-5 h-5' }: IconProps) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1.5" fill="currentColor" stroke="none"/></svg>;
@@ -203,46 +204,112 @@ export function Shell({ children }: { children: ReactNode }) {
   const portalDest  = isOnline ? '/connecting' : '/';
   const portalGroup = ['/', '/watch', '/survey', '/connecting'];
 
+  const { isDark, toggle: toggleTheme } = useTheme();
+
   return (
-    <div className="min-h-screen flex items-center justify-center p-3 sm:p-5">
-      {/* Atmosphere */}
+    <div className="min-h-screen flex items-center justify-center p-3 sm:p-5"
+      style={{ background: 'var(--bg-void)', transition: 'background 0.3s ease' }}>
+
+      {/* Atmosphere glows — subtle in both modes */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute -top-40 left-1/2 -translate-x-1/2 w-[800px] h-[500px] bg-signal/[0.06] rounded-full blur-[160px]"/>
-        <div className="absolute bottom-0 right-0 w-[500px] h-[500px] bg-aqua/[0.03] rounded-full blur-[120px]"/>
-        <div className="absolute inset-0 opacity-[0.018]" style={{
-          backgroundImage: 'linear-gradient(rgba(255,255,255,0.6) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.6) 1px, transparent 1px)',
+        <div className="absolute -top-40 left-1/2 -translate-x-1/2 w-[800px] h-[500px] rounded-full blur-[160px]"
+          style={{ background: 'var(--atm-top)' }}/>
+        <div className="absolute bottom-0 right-0 w-[500px] h-[500px] rounded-full blur-[120px]"
+          style={{ background: 'var(--atm-bot)' }}/>
+        <div className="absolute inset-0" style={{
+          opacity: isDark ? 0.018 : 0.025,
+          backgroundImage: `linear-gradient(var(--atm-grid) 1px, transparent 1px), linear-gradient(90deg, var(--atm-grid) 1px, transparent 1px)`,
           backgroundSize: '32px 32px',
         }}/>
       </div>
 
       <div className="relative w-full max-w-[420px]">
 
-        {/* Timer banner above card */}
+        {/* Timer banner */}
         {isOnline && status?.expiresAt && (
           <SessionTimerBanner expiresAt={status.expiresAt} sessionHours={sessionHours}/>
         )}
 
-        <div className="bg-void/95 border border-white/[0.07] rounded-2xl shadow-lifted overflow-hidden backdrop-blur-xl">
+        {/* Card */}
+        <div className="rounded-2xl overflow-hidden backdrop-blur-xl"
+          style={{
+            background: 'var(--bg-card)',
+            border: '1px solid var(--border-card)',
+            boxShadow: isDark
+              ? '0 8px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.06)'
+              : '0 8px 32px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.06)',
+          }}>
 
           {/* Header */}
-          <div className="px-5 pt-4 pb-3.5 border-b border-white/[0.05] bg-gradient-to-b from-white/[0.03] to-transparent">
+          <div className="px-5 pt-4 pb-3.5"
+            style={{
+              borderBottom: '1px solid var(--border-card)',
+              background: 'var(--header-bg)',
+            }}>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-signal to-aqua flex items-center justify-center glow-signal shrink-0">
-                  <IconWifi className="w-[18px] h-[18px] text-void"/>
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-signal to-aqua
+                  flex items-center justify-center glow-signal shrink-0">
+                  <IconWifi className="w-[18px] h-[18px]" style={{ color: '#040b14' }}/>
                 </div>
                 <div>
-                  <p className="text-[9px] font-display font-bold tracking-[0.2em] uppercase text-signal/60 leading-none mb-0.5">Free Wi-Fi</p>
-                  <h1 className="font-display font-bold text-[15px] text-white leading-none">{campName ?? 'CityNet Hotspot'}</h1>
+                  <p className="text-[9px] font-display font-bold tracking-[0.2em] uppercase leading-none mb-0.5"
+                    style={{ color: 'rgba(0,210,160,0.65)' }}>Free Wi-Fi</p>
+                  <h1 className="font-display font-bold text-[15px] leading-none"
+                    style={{ color: 'var(--text-primary)' }}>
+                    {campName ?? 'CityNet Hotspot'}
+                  </h1>
                 </div>
               </div>
-              <ConnectionChip isOnline={isOnline} urgent={urgent}/>
+
+              {/* Right: connection chip + theme toggle */}
+              <div className="flex items-center gap-2 shrink-0">
+                <ConnectionChip isOnline={isOnline} urgent={urgent}/>
+
+                {/* Theme toggle — compact pill */}
+                <button
+                  onClick={toggleTheme}
+                  title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+                  aria-label={isDark ? 'Light mode' : 'Dark mode'}
+                  className="relative flex items-center shrink-0 cursor-pointer transition-all duration-300"
+                  style={{
+                    width: 44,
+                    height: 24,
+                    borderRadius: 999,
+                    border: isDark ? '1px solid rgba(255,255,255,0.12)' : '1px solid rgba(0,210,160,0.35)',
+                    background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,210,160,0.12)',
+                    padding: 0,
+                  }}
+                >
+                  {/* Thumb */}
+                  <span style={{
+                    position: 'absolute',
+                    top: 3,
+                    left: isDark ? 3 : 'calc(100% - 21px)',
+                    width: 16,
+                    height: 16,
+                    borderRadius: '50%',
+                    background: isDark ? '#334155' : '#00d2a0',
+                    boxShadow: isDark ? '0 1px 4px rgba(0,0,0,0.5)' : '0 1px 4px rgba(0,210,160,0.4)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 8,
+                    transition: 'left 0.25s ease, background 0.25s ease',
+                  }}>
+                    {isDark ? '🌙' : '☀️'}
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
 
           {/* Step indicator */}
           {showSteps && (
-            <div className="px-5 py-3 border-b border-white/[0.04] bg-night/40">
+            <div className="px-5 py-3" style={{
+              borderBottom: '1px solid var(--border-card)',
+              background: 'var(--step-bar-bg)',
+            }}>
               <div className="flex items-center">
                 {STEPS.map((step, i) => {
                   const done = i < stepIdx;
@@ -253,14 +320,24 @@ export function Shell({ children }: { children: ReactNode }) {
                         <div className={`step-node ${done ? 'step-done' : cur ? 'step-current' : 'step-future'}`}>
                           {done ? <IconCheck className="w-3 h-3"/> : <step.Icon className="w-3.5 h-3.5"/>}
                         </div>
-                        <span className={`text-[8px] font-display font-bold uppercase tracking-wider transition-colors duration-300
-                          ${cur ? 'text-white/60' : done ? 'text-signal/50' : 'text-white/15'}`}>
+                        <span className="text-[8px] font-display font-bold uppercase tracking-wider transition-colors duration-300"
+                          style={{
+                            color: cur
+                              ? 'var(--text-muted)'
+                              : done
+                                ? 'rgba(0,210,160,0.50)'
+                                : 'var(--text-faint)',
+                          }}>
                           {step.label}
                         </span>
                       </div>
                       {i < STEPS.length - 1 && (
-                        <div className={`h-px flex-1 mx-1.5 mb-4 rounded-full transition-all duration-500
-                          ${i < stepIdx ? 'bg-gradient-to-r from-signal to-aqua' : 'bg-white/[0.08]'}`}/>
+                        <div className="h-px flex-1 mx-1.5 mb-4 rounded-full transition-all duration-500"
+                          style={{
+                            background: i < stepIdx
+                              ? 'linear-gradient(to right, #00d2a0, #00b4ff)'
+                              : 'var(--border-input)',
+                          }}/>
                       )}
                     </div>
                   );
@@ -270,7 +347,9 @@ export function Shell({ children }: { children: ReactNode }) {
           )}
 
           {/* Content */}
-          <div className="min-h-[400px]">{children}</div>
+          <div className="min-h-[400px]" style={{ background: 'var(--bg-card)' }}>
+            {children}
+          </div>
 
           {/* Tab bar */}
           <div className="tab-bar">
@@ -292,7 +371,8 @@ export function Shell({ children }: { children: ReactNode }) {
 
         </div>
 
-        <p className="text-center text-[9px] text-white/10 font-body mt-3">
+        <p className="text-center text-[9px] font-body mt-3"
+          style={{ color: 'var(--footer-text)' }}>
           Powered by CityNet · Free community internet access
         </p>
       </div>
