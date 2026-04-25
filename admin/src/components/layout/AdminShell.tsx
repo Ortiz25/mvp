@@ -201,7 +201,9 @@ export function AdminShell({ tab, onTab, onLogout, children }: Props) {
             {/* Page title */}
             <div className="flex items-center gap-2 min-w-0">
               {currentNav && (
-                <currentNav.Icon className="w-4 h-4 shrink-0" style={{ color: 'var(--text-muted)' }} />
+                <span className="shrink-0" style={{ color: 'var(--text-muted)' }}>
+                  <currentNav.Icon className="w-4 h-4" />
+                </span>
               )}
               <h1 className="font-display font-bold text-sm md:text-base leading-none truncate"
                 style={{ color: 'var(--text-primary)' }}>
